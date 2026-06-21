@@ -85,29 +85,37 @@ mysqli_close($conn);
 // Redirect based on role
 if ($user['role'] === 'student') {
     header("Location: students/student_dashboard.php");
-} elseif ($user['role'] === 'hod') {
-    header("Location: hod/hod_dashboard.php");
-} elseif ($user['role'] === 'dean') {
-    header("Location: staff/dean_dashboard.php");
 } 
+elseif ($user['role'] === 'hod') {
+    header("Location: hod/hod_dashboard.php");
+} 
+elseif ($user['role'] === 'dean') {
+    header("Location: dean/dean_dashboard.php");
+}
 elseif ($user['role'] === 'examination_officer') {
-    header("Location: staff/examination_dashboard.php");
+    header("Location: examination_officer/examination_dashboard.php");
 }
 elseif ($user['role'] === 'accountant') {
-    header("Location: staff/accountant_dashboard.php");
+    header("Location: accountant/accountant_dashboard.php");
 }
 elseif ($user['role'] === 'president') {
     header("Location: staff/president_dashboard.php");
 }
 elseif ($user['role'] === 'deputy_rector') {
-    header("Location: staff/deputy_rector_dashboard.php");
-} elseif ($user['role'] === 'rector') {
-    header("Location: staff/rector_dashboard.php");
+    header("Location: deputy_rector/deputy_rector_dashboard.php");
+} 
+elseif ($user['role'] === 'rector') {
+    header("Location: rector/dashboard.php");
+}
+elseif ($user['role'] === 'it_officer') {
+    header("Location: it_officer/it_officer_dashboard.php");
+}
+elseif ($user['role'] === 'admin') {
+    header("Location: admin/admin_dashboard.php");
 }
 else {
     header("Location: staff/staff_dashboard.php");
 }
-
 
 exit();
 ?>

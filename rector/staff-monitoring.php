@@ -1,21 +1,19 @@
 <?php
 session_start();
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'rector') {
     header("Location: ../index.php");
     exit();
 }
-
 require_once '../includes/connection.php';
 
-$student_id = $_SESSION['user_id'];
-$student_name = $_SESSION['full_name'];
-$student_email = $_SESSION['email'];
-$student_reg = $_SESSION['reg_number'] ?? '';
+$rector_id = $_SESSION['user_id'];
+$rector_name = $_SESSION['full_name'];
+$rector_email = $_SESSION['email'];
 
 // Get profile data
 $prof_sql = "SELECT phone_number, profile_picture FROM users WHERE id = ?";
 $prof_stmt = mysqli_prepare($conn, $prof_sql);
-mysqli_stmt_bind_param($prof_stmt, "i", $student_id);
+mysqli_stmt_bind_param($prof_stmt, "i", $rector_id);
 mysqli_stmt_execute($prof_stmt);
 $prof_result = mysqli_stmt_get_result($prof_stmt);
 $prof_data = mysqli_fetch_assoc($prof_result);
@@ -24,61 +22,166 @@ $profile_pic = $prof_data['profile_picture'] ?? '';
 if (!isset($_SESSION['profile_picture']) && $profile_pic) $_SESSION['profile_picture'] = $profile_pic;
 mysqli_stmt_close($prof_stmt);
 
-// Get statistics
-$stats_sql = "SELECT 
-    COUNT(*) as total,
-    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-    SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-    SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
-    SUM(CASE WHEN status = 'escalated' THEN 1 ELSE 0 END) as escalated
-    FROM complaints WHERE student_id = ?";
-$stats_stmt = mysqli_prepare($conn, $stats_sql);
-mysqli_stmt_bind_param($stats_stmt, "i", $student_id);
-mysqli_stmt_execute($stats_stmt);
-$stats_result = mysqli_stmt_get_result($stats_stmt);
-$stats = mysqli_fetch_assoc($stats_result);
-mysqli_stmt_close($stats_stmt);
+// ========== GET STAFF ROLES (Rector excluded) ==========
+$staff_roles = [
+    'hod' => 'HOD',
+    'dean' => 'Dean of Students',
+    'examination_officer' => 'Examination Officer',
+    'president' => 'IAASO President',
+    'deputy_rector' => 'Deputy Rector',
+    'accountant' => 'Accountant',
+    'it_officer' => 'IT Officer',
+    'director' => 'Director'
+];
 
-// Get recent complaints (limit 5)
-$recent_sql = "SELECT id, complaint_number, title, status, created_at 
-               FROM complaints 
-               WHERE student_id = ? 
-               ORDER BY created_at DESC LIMIT 5";
-$recent_stmt = mysqli_prepare($conn, $recent_sql);
-mysqli_stmt_bind_param($recent_stmt, "i", $student_id);
-mysqli_stmt_execute($recent_stmt);
-$recent_result = mysqli_stmt_get_result($recent_stmt);
+// ========== GET STAFF PERFORMANCE DATA ==========
+$staff_data = [];
+$overall_stats = [
+    'total_staff' => 0,
+    'total_assigned' => 0,
+    'total_resolved' => 0,
+    'total_pending' => 0,
+    'avg_resolution' => 0
+];
 
-// Get announcements
-$announcements = [];
-$table_check = mysqli_query($conn, "SHOW TABLES LIKE 'announcements'");
-if ($table_check && mysqli_num_rows($table_check) > 0) {
-    $announcement_sql = "SELECT a.id, a.title, a.message, a.created_at, u.full_name as sender_name 
-                         FROM announcements a
-                         LEFT JOIN users u ON a.created_by = u.id
-                         WHERE a.is_active = 1 
-                         AND (a.target_type = 'all' 
-                              OR a.target_type = 'students'
-                              OR (a.target_type = 'individual' AND a.target_id = ?))
-                         ORDER BY a.created_at DESC LIMIT 4";
-    $ann_stmt = mysqli_prepare($conn, $announcement_sql);
-    if ($ann_stmt) {
-        mysqli_stmt_bind_param($ann_stmt, "i", $student_id);
-        mysqli_stmt_execute($ann_stmt);
-        $ann_result = mysqli_stmt_get_result($ann_stmt);
-        while ($ann = mysqli_fetch_assoc($ann_result)) {
-            $announcements[] = $ann;
+foreach ($staff_roles as $role => $display) {
+    // Get staff members with this role
+    $staff_sql = "SELECT id, full_name, email, phone_number, profile_picture, created_at 
+                  FROM users 
+                  WHERE role = ? AND is_active = 1";
+    $staff_stmt = mysqli_prepare($conn, $staff_sql);
+    mysqli_stmt_bind_param($staff_stmt, "s", $role);
+    mysqli_stmt_execute($staff_stmt);
+    $staff_res = mysqli_stmt_get_result($staff_stmt);
+    
+    while ($staff = mysqli_fetch_assoc($staff_res)) {
+        $staff_id = $staff['id'];
+        
+        // Get complaint stats for this staff
+        $stats_sql = "SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
+                        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+                        SUM(CASE WHEN status = 'escalated' THEN 1 ELSE 0 END) as escalated
+                      FROM complaints 
+                      WHERE assigned_to = ?";
+        $stats_stmt = mysqli_prepare($conn, $stats_sql);
+        mysqli_stmt_bind_param($stats_stmt, "i", $staff_id);
+        mysqli_stmt_execute($stats_stmt);
+        $stats_res = mysqli_stmt_get_result($stats_stmt);
+        $stats = mysqli_fetch_assoc($stats_res);
+        mysqli_stmt_close($stats_stmt);
+        
+        $total = (int)$stats['total'];
+        $resolved = (int)$stats['resolved'];
+        $pending = (int)$stats['pending'];
+        $in_progress = (int)$stats['in_progress'];
+        $escalated = (int)$stats['escalated'];
+        
+        // Calculate resolution rate
+        $resolution_rate = $total > 0 ? round(($resolved / $total) * 100, 1) : 0;
+        
+        // Get average response time (in hours)
+        $avg_sql = "SELECT AVG(TIMESTAMPDIFF(HOUR, c.created_at, r.created_at)) as avg_hours
+                    FROM complaints c
+                    JOIN responses r ON r.complaint_id = c.id
+                    WHERE c.assigned_to = ? 
+                    AND r.user_id = c.assigned_to
+                    AND r.id = (SELECT MIN(id) FROM responses WHERE complaint_id = c.id)";
+        $avg_stmt = mysqli_prepare($conn, $avg_sql);
+        mysqli_stmt_bind_param($avg_stmt, "i", $staff_id);
+        mysqli_stmt_execute($avg_stmt);
+        $avg_res = mysqli_stmt_get_result($avg_stmt);
+        $avg_row = mysqli_fetch_assoc($avg_res);
+        $avg_response = $avg_row['avg_hours'] ? round($avg_row['avg_hours'], 1) : 0;
+        mysqli_stmt_close($avg_stmt);
+        
+        // Get last activity
+        $last_activity_sql = "SELECT MAX(created_at) as last_activity FROM responses WHERE user_id = ?";
+        $last_stmt = mysqli_prepare($conn, $last_activity_sql);
+        mysqli_stmt_bind_param($last_stmt, "i", $staff_id);
+        mysqli_stmt_execute($last_stmt);
+        $last_res = mysqli_stmt_get_result($last_stmt);
+        $last_row = mysqli_fetch_assoc($last_res);
+        $last_activity = $last_row['last_activity'] ?? $staff['created_at'];
+        mysqli_stmt_close($last_stmt);
+        
+        // Determine rating based on resolution rate
+        if ($resolution_rate >= 70) {
+            $rating = 'Excellent';
+            $rating_class = 'rating-excellent';
+            $rating_icon = '⭐';
+        } elseif ($resolution_rate >= 50) {
+            $rating = 'Good';
+            $rating_class = 'rating-good';
+            $rating_icon = '⭐';
+        } else {
+            $rating = 'Needs Improvement';
+            $rating_class = 'rating-poor';
+            $rating_icon = '⭐';
         }
-        mysqli_stmt_close($ann_stmt);
+        
+        $staff_data[] = [
+            'id' => $staff_id,
+            'name' => $staff['full_name'],
+            'email' => $staff['email'],
+            'phone' => $staff['phone_number'] ?? 'N/A',
+            'role' => $display,
+            'role_key' => $role,
+            'profile_pic' => $staff['profile_picture'] ?? '',
+            'total' => $total,
+            'resolved' => $resolved,
+            'pending' => $pending,
+            'in_progress' => $in_progress,
+            'escalated' => $escalated,
+            'resolution_rate' => $resolution_rate,
+            'avg_response' => $avg_response,
+            'last_activity' => $last_activity,
+            'rating' => $rating,
+            'rating_class' => $rating_class,
+            'rating_icon' => $rating_icon
+        ];
+        
+        // Update overall stats
+        $overall_stats['total_staff']++;
+        $overall_stats['total_assigned'] += $total;
+        $overall_stats['total_resolved'] += $resolved;
+        $overall_stats['total_pending'] += $pending;
     }
+    mysqli_stmt_close($staff_stmt);
 }
+
+// ========== FIND TOP PERFORMER (Highest Resolution Rate) ==========
+// Only include staff with at least 1 complaint
+$staff_with_complaints = array_filter($staff_data, function($s) {
+    return $s['total'] > 0;
+});
+
+// Sort by resolution rate (descending)
+usort($staff_with_complaints, function($a, $b) {
+    return $b['resolution_rate'] - $a['resolution_rate'];
+});
+
+// Get top performer (staff with highest resolution rate)
+$top_performer = !empty($staff_with_complaints) ? $staff_with_complaints[0] : null;
+
+// Sort main staff list by total complaints (highest first)
+usort($staff_data, function($a, $b) {
+    return $b['total'] - $a['total'];
+});
+
+// Calculate average resolution rate
+$overall_resolution_rate = $overall_stats['total_assigned'] > 0 
+    ? round(($overall_stats['total_resolved'] / $overall_stats['total_assigned']) * 100, 1) 
+    : 0;
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Student Dashboard - IAA CFMS</title>
+    <title>Staff Monitoring - Rector Panel</title>
     <link rel="icon" type="image/png" href="../images/logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -320,7 +423,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         /* ---------- TOP BAR ---------- */
         .top-bar {
             background: rgba(255,255,255,0.92);
-            padding: 12px 32px;
+            padding: 16px 32px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -331,28 +434,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             backdrop-filter: blur(10px);
             flex-wrap: wrap;
             gap: 12px;
-        }
-
-        .btn-new-complaint {
-            background: #1a56db;
-            color: white;
-            border: none;
-            padding: 10px 24px;
-            border-radius: 30px;
-            font-weight: 600;
-            font-size: 0.85rem;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .btn-new-complaint:hover {
-            background: #0d3b8a;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 86, 219, 0.3);
-            color: white;
         }
 
         .profile-info { 
@@ -396,123 +477,140 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             flex: 1;
         }
 
-        /* ========== SUMMARY CARDS ========== */
-        .summary-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        /* ========== PAGE HEADER ========== */
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
             gap: 16px;
-            margin-bottom: 28px;
+            margin-bottom: 24px;
+        }
+        .page-header h2 {
+            font-size: 1.3rem;
+            color: #0a2a5e;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .page-header h2 i {
+            color: #1a56db;
+        }
+        .page-header .subtitle {
+            color: #6b85a0;
+            font-size: 0.85rem;
         }
 
-        .summary-card {
+        /* ========== STATS CARDS ========== */
+        .stats-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .stat-card {
             background: white;
-            border-radius: 16px;
-            padding: 18px 16px;
+            border-radius: 20px;
+            padding: 22px 20px;
             text-align: center;
             box-shadow: 0 2px 12px rgba(10,42,94,0.05);
             border: 1px solid rgba(255,255,255,0.6);
             transition: all 0.2s;
-            cursor: pointer;
         }
-        .summary-card:hover {
-            transform: translateY(-3px);
+        .stat-card:hover {
+            transform: translateY(-4px);
             box-shadow: 0 8px 30px rgba(10,42,94,0.10);
         }
-        .summary-card .icon {
-            font-size: 1.5rem;
-            margin-bottom: 4px;
+        .stat-card .icon {
+            font-size: 1.8rem;
+            margin-bottom: 6px;
         }
-        .summary-card .number {
-            font-size: 1.5rem;
+        .stat-card .number {
+            font-size: 2rem;
             font-weight: 800;
             color: #0a2a5e;
             line-height: 1.2;
         }
-        .summary-card .label {
+        .stat-card .label {
             color: #6b85a0;
-            font-size: 0.7rem;
+            font-size: 0.85rem;
             font-weight: 500;
             margin-top: 2px;
         }
-        .summary-card .icon.blue { color: #1a56db; }
-        .summary-card .icon.yellow { color: #f59e0b; }
-        .summary-card .icon.purple { color: #6d28d9; }
-        .summary-card .icon.green { color: #10b981; }
-        .summary-card .icon.red { color: #dc2626; }
 
-        /* ========== BUTTONS ========== */
-        .btn-sm {
-            padding: 6px 20px;
-            border-radius: 30px;
-            background: #1a56db;
+        /* ========== TOP PERFORMER ========== */
+        .top-performer {
+            background: white;
+            border-radius: 20px;
+            padding: 24px 28px;
+            margin-bottom: 28px;
+            border: 1px solid rgba(255,255,255,0.6);
+            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            flex-wrap: wrap;
+            background: linear-gradient(135deg, #ffffff 0%, #f0f4ff 100%);
+            border-left: 4px solid #f59e0b;
+        }
+        .top-performer .badge {
+            background: #f59e0b;
             color: white;
-            text-decoration: none;
+            padding: 4px 16px;
+            border-radius: 30px;
             font-size: 0.7rem;
             font-weight: 600;
-            display: inline-block;
-            transition: all 0.2s;
-            border: none;
-            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .btn-sm:hover {
-            background: #0d3b8a;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 86, 219, 0.3);
+        .top-performer .avatar {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #0a2a5e, #003d7a);
+            display: flex;
+            align-items: center;
+            justify-content: center;
             color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            flex-shrink: 0;
+            overflow: hidden;
         }
-
-        /* ---------- BADGE ---------- */
-        .badge {
-            padding: 3px 10px;
-            border-radius: 30px;
-            font-size: 0.65rem;
-            font-weight: 600;
-            display: inline-block;
-            text-transform: capitalize;
-        }
-        .badge-pending { background: #fef3c7; color: #b45309; }
-        .badge-in-progress { background: #dbeafe; color: #1e40af; }
-        .badge-resolved { background: #d1fae5; color: #065f46; }
-        .badge-escalated { background: #fee2e2; color: #991b1b; }
-        .badge-new { background: #1a56db; color: white; font-size: 0.55rem; padding: 2px 10px; border-radius: 30px; font-weight: 600; text-transform: uppercase; }
-
-        /* ---------- TABLE ---------- */
-        .table-responsive { 
-            overflow-x: auto; 
-            -webkit-overflow-scrolling: touch;
-            margin: 0 -4px;
-        }
-
-        .complaints-table {
+        .top-performer .avatar img {
             width: 100%;
-            border-collapse: collapse;
+            height: 100%;
+            object-fit: cover;
+        }
+        .top-performer .info h4 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #0a2a5e;
+        }
+        .top-performer .info .role {
+            color: #6b85a0;
             font-size: 0.85rem;
         }
-        .complaints-table thead th {
-            background: #f8fafc;
-            padding: 10px 14px;
-            text-align: left;
-            font-weight: 600;
-            color: #4a5a7a;
+        .top-performer .metrics {
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            margin-left: auto;
+        }
+        .top-performer .metrics .item {
+            text-align: center;
+        }
+        .top-performer .metrics .item .num {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #0a2a5e;
+        }
+        .top-performer .metrics .item .lbl {
             font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-            border-bottom: 2px solid #e5edf5;
-        }
-        .complaints-table tbody td {
-            padding: 10px 14px;
-            border-bottom: 1px solid #f0f4f9;
-            color: #1f2c40;
-            vertical-align: middle;
-        }
-        .complaints-table tbody tr:hover {
-            background: #fafcff;
-        }
-        .complaints-table tbody tr:last-child td {
-            border-bottom: none;
+            color: #6b85a0;
         }
 
-        /* ---------- CONTENT AREA ---------- */
+        /* ========== STAFF TABLE ========== */
         .content-area {
             background: white;
             border-radius: 20px;
@@ -534,113 +632,88 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             color: #1a56db;
         }
 
-        .no-data {
-            text-align: center;
-            padding: 40px 20px;
-            color: #8ba0bc;
-        }
-        .no-data i {
-            font-size: 2rem;
-            display: block;
-            margin-bottom: 10px;
-            color: #dbeafe;
+        .table-responsive {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin: 0 -4px;
         }
 
-        /* ---------- ANNOUNCEMENT SIDEBAR ---------- */
-        .announcements-sidebar {
-            background: white;
-            border-radius: 20px;
-            padding: 24px 22px;
-            border: 1px solid rgba(255,255,255,0.6);
-            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
-            min-height: 300px;
+        .staff-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
         }
-        .announcements-sidebar h4 {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #0a2a5e;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .announcements-sidebar h4 i {
-            color: #f59e0b;
-        }
-        .announcements-sidebar .view-all {
-            font-size: 0.75rem;
-            color: #1a56db;
-            text-decoration: none;
+        .staff-table thead th {
+            background: #f8fafc;
+            padding: 12px 14px;
+            text-align: left;
             font-weight: 600;
-            margin-left: auto;
+            color: #4a5a7a;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            border-bottom: 2px solid #e5edf5;
+            white-space: nowrap;
         }
-        .announcements-sidebar .view-all:hover {
-            text-decoration: underline;
-        }
-
-        .announcement-summary {
-            padding: 14px 0;
+        .staff-table tbody td {
+            padding: 12px 14px;
             border-bottom: 1px solid #f0f4f9;
+            color: #1f2c40;
+            vertical-align: middle;
         }
-        .announcement-summary:last-child {
+        .staff-table tbody tr:hover {
+            background: #fafcff;
+        }
+        .staff-table tbody tr:last-child td {
             border-bottom: none;
         }
-        .announcement-summary .a-title {
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: #0a2a5e;
-            display: flex;
+        .staff-table .staff-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #0a2a5e, #003d7a);
+            display: inline-flex;
             align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .announcement-summary .a-title .badge-new {
-            background: #1a56db;
+            justify-content: center;
             color: white;
-            font-size: 0.55rem;
-            padding: 2px 10px;
-            border-radius: 30px;
             font-weight: 600;
-            text-transform: uppercase;
+            font-size: 0.8rem;
+            overflow: hidden;
         }
-        .announcement-summary .a-sender {
-            font-size: 0.78rem;
+        .staff-table .staff-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .staff-table .staff-name {
+            font-weight: 600;
+            color: #0a2a5e;
+        }
+        .staff-table .staff-role {
+            font-size: 0.7rem;
             color: #6b85a0;
-            margin-top: 3px;
         }
-        .announcement-summary .a-sender i {
-            margin-right: 4px;
-            color: #1a56db;
-        }
-        .announcement-summary .a-time {
+        .staff-table .rating-badge {
+            display: inline-block;
+            padding: 2px 12px;
+            border-radius: 30px;
             font-size: 0.65rem;
-            color: #8ba0bc;
-            margin-top: 3px;
+            font-weight: 600;
         }
-        .announcement-summary .a-time i {
+        .rating-excellent { background: #d1fae5; color: #065f46; }
+        .rating-good { background: #fef3c7; color: #b45309; }
+        .rating-poor { background: #fee2e2; color: #991b1b; }
+
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
             margin-right: 4px;
         }
-
-        .no-announcements-sidebar {
-            color: #8ba0bc;
-            text-align: center;
-            padding: 30px 0;
-            font-size: 0.9rem;
-        }
-        .no-announcements-sidebar i {
-            font-size: 1.5rem;
-            display: block;
-            margin-bottom: 8px;
-        }
-
-        /* ---------- GRID LAYOUT ---------- */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 70% 30%;
-            gap: 24px;
-            margin-top: 24px;
-        }
+        .status-dot.high { background: #dc2626; }
+        .status-dot.medium { background: #f59e0b; }
+        .status-dot.low { background: #10b981; }
 
         /* ---------- MODAL ---------- */
         .modal-overlay {
@@ -745,8 +818,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 
         @media (max-width: 1024px) {
             .dashboard-body { padding: 20px 24px; }
-            .top-bar { padding: 12px 20px; }
-            .dashboard-grid { grid-template-columns: 1fr; }
+            .top-bar { padding: 14px 24px; }
         }
 
         @media (max-width: 768px) {
@@ -780,14 +852,14 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             
             .menu-item {
                 justify-content: center !important;
-                padding: 12px 0 !important;
-                margin: 12px 0 !important;
+                padding: 10px 0 !important;
+                margin: 4px 0 !important;
                 gap: 0 !important;
-                border-radius: 10px !important;
+                border-radius: 8px !important;
             }
             .menu-item span { display: none !important; }
             .menu-item i {
-                font-size: 1.3rem !important;
+                font-size: 1.1rem !important;
                 width: 100% !important;
                 text-align: center !important;
                 margin: 0 !important;
@@ -795,11 +867,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             .menu-item:hover { transform: none !important; }
             
             .logout-item .menu-item span { display: none !important; }
-            .logout-item .menu-item i { font-size: 1.3rem !important; }
-            .logout-item {
-                margin-bottom: 20px;
-                padding-top: 16px;
-            }
+            .logout-item .menu-item i { font-size: 1.1rem !important; }
 
             .main-content {
                 margin-left: 70px !important;
@@ -810,33 +878,42 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             }
 
             .dashboard-body { padding: 12px; }
-            .top-bar { 
-                padding: 10px 12px; 
-                gap: 8px;
-                flex-direction: row;
-                justify-content: space-between;
-            }
-            .btn-new-complaint {
-                font-size: 0.75rem;
-                padding: 8px 16px;
-            }
+            .top-bar { padding: 10px 12px; gap: 8px; }
 
             .profile-details .name { font-size: 0.7rem; }
             .profile-details .reg { font-size: 0.5rem; }
             .profile-pic { width: 32px; height: 32px; }
 
-            .summary-row {
+            .page-header h2 {
+                font-size: 1rem;
+            }
+
+            .stats-cards {
                 grid-template-columns: repeat(2, 1fr);
                 gap: 10px;
             }
-            .summary-card {
-                padding: 12px 10px;
+            .stat-card {
+                padding: 16px 12px;
             }
-            .summary-card .number {
-                font-size: 1.2rem;
+            .stat-card .number {
+                font-size: 1.4rem;
             }
-            .summary-card .label {
-                font-size: 0.6rem;
+            .stat-card .label {
+                font-size: 0.7rem;
+            }
+
+            .top-performer {
+                flex-direction: column;
+                text-align: center;
+                padding: 20px;
+            }
+            .top-performer .metrics {
+                margin-left: 0;
+                justify-content: center;
+                width: 100%;
+            }
+            .top-performer .metrics .item .num {
+                font-size: 1.1rem;
             }
 
             .content-area {
@@ -847,32 +924,14 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.85rem;
             }
 
-            .announcements-sidebar {
-                padding: 16px;
-                min-height: auto;
-            }
-
-            .complaints-table thead th,
-            .complaints-table tbody td {
+            .staff-table thead th,
+            .staff-table tbody td {
                 padding: 8px 10px;
                 font-size: 0.7rem;
             }
-            .badge {
-                font-size: 0.55rem;
-                padding: 2px 8px;
-            }
-            .btn-sm {
-                font-size: 0.55rem;
-                padding: 3px 10px;
-            }
-
-            .announcement-summary .a-title {
-                font-size: 0.8rem;
-            }
-            .announcement-summary .a-sender {
-                font-size: 0.7rem;
-            }
-            .announcement-summary .a-time {
+            .staff-table .staff-avatar {
+                width: 28px;
+                height: 28px;
                 font-size: 0.6rem;
             }
 
@@ -908,11 +967,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.75rem;
                 padding: 10px 14px;
             }
-
-            .dashboard-grid {
-                grid-template-columns: 1fr;
-                gap: 16px;
-            }
         }
 
         @media (max-width: 480px) {
@@ -926,18 +980,14 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.7rem !important;
             }
             .menu-item {
-                padding: 10px 0 !important;
-                margin: 10px 0 !important;
+                padding: 8px 0 !important;
+                margin: 3px 0 !important;
             }
             .menu-item i {
-                font-size: 1.1rem !important;
+                font-size: 1rem !important;
             }
             .logout-item .menu-item i {
-                font-size: 1.1rem !important;
-            }
-            .logout-item {
-                margin-bottom: 16px;
-                padding-top: 12px;
+                font-size: 1rem !important;
             }
 
             .main-content {
@@ -949,29 +999,50 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 
             .dashboard-body { padding: 8px; }
             .top-bar { padding: 8px 10px; gap: 6px; }
-            .btn-new-complaint {
-                font-size: 0.7rem;
-                padding: 6px 12px;
-            }
             .profile-pic { width: 28px; height: 28px; }
             .profile-details .name { font-size: 0.6rem; }
             .profile-details .reg { font-size: 0.45rem; }
 
-            .summary-row {
+            .page-header h2 {
+                font-size: 0.9rem;
+            }
+
+            .stats-cards {
                 grid-template-columns: 1fr 1fr;
-                gap: 6px;
+                gap: 8px;
             }
-            .summary-card {
-                padding: 10px 8px;
+            .stat-card {
+                padding: 12px 8px;
             }
-            .summary-card .number {
+            .stat-card .number {
+                font-size: 1.2rem;
+            }
+            .stat-card .label {
+                font-size: 0.6rem;
+            }
+            .stat-card .icon {
+                font-size: 1.2rem;
+            }
+
+            .top-performer {
+                padding: 16px;
+            }
+            .top-performer .avatar {
+                width: 48px;
+                height: 48px;
+                font-size: 1.2rem;
+            }
+            .top-performer .info h4 {
+                font-size: 0.9rem;
+            }
+            .top-performer .metrics {
+                gap: 12px;
+            }
+            .top-performer .metrics .item .num {
                 font-size: 1rem;
             }
-            .summary-card .label {
-                font-size: 0.55rem;
-            }
-            .summary-card .icon {
-                font-size: 1.2rem;
+            .top-performer .metrics .item .lbl {
+                font-size: 0.6rem;
             }
 
             .content-area {
@@ -982,28 +1053,19 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.75rem;
             }
 
-            .announcements-sidebar {
-                padding: 12px;
-            }
-
-            .complaints-table thead th,
-            .complaints-table tbody td {
+            .staff-table thead th,
+            .staff-table tbody td {
                 padding: 6px 6px;
                 font-size: 0.6rem;
             }
-            .btn-sm {
+            .staff-table .staff-avatar {
+                width: 24px;
+                height: 24px;
                 font-size: 0.5rem;
-                padding: 2px 8px;
             }
-
-            .announcement-summary .a-title {
-                font-size: 0.75rem;
-            }
-            .announcement-summary .a-sender {
-                font-size: 0.65rem;
-            }
-            .announcement-summary .a-time {
+            .staff-table .rating-badge {
                 font-size: 0.55rem;
+                padding: 1px 8px;
             }
 
             .modal-container {
@@ -1041,58 +1103,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             .toast i {
                 font-size: 1rem;
             }
-
-            .dashboard-grid {
-                grid-template-columns: 1fr;
-                gap: 12px;
-            }
-        }
-
-        @media (max-width: 380px) {
-            .sidebar {
-                width: 55px !important;
-            }
-            .sidebar:not(.collapsed) { width: 55px !important; }
-            .sidebar.collapsed { width: 55px !important; }
-            .main-content {
-                margin-left: 55px !important;
-            }
-            .sidebar.collapsed ~ .main-content {
-                margin-left: 55px !important;
-            }
-            .menu-item {
-                padding: 8px 0 !important;
-                margin: 8px 0 !important;
-            }
-            .menu-item i {
-                font-size: 1rem !important;
-            }
-            .logout-item .menu-item i {
-                font-size: 1rem !important;
-            }
-
-            .summary-row {
-                grid-template-columns: 1fr 1fr;
-                gap: 4px;
-            }
-            .summary-card {
-                padding: 8px 6px;
-            }
-            .summary-card .number {
-                font-size: 0.9rem;
-            }
-            .summary-card .label {
-                font-size: 0.5rem;
-            }
-            .summary-card .icon {
-                font-size: 1rem;
-            }
-
-            .complaints-table thead th,
-            .complaints-table tbody td {
-                padding: 4px 4px;
-                font-size: 0.5rem;
-            }
         }
     </style>
 </head>
@@ -1105,35 +1115,38 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <div class="row-cfms">
-            <span class="brand">CFMS <span>| Student</span></span>
+            <span class="brand">CFMS <span>| Rector</span></span>
             <button class="toggle-inline" id="toggleInline">❮</button>
         </div>
         <div class="row-tagline">
-            <span class="tagline">Student Portal</span>
+            <span class="tagline">Rector Portal</span>
             <button class="toggle-standalone" id="toggleStandalone">❮</button>
         </div>
     </div>
 
     <div class="sidebar-menu">
-        <a href="student_dashboard.php" class="menu-item active">
+        <a href="dashboard.php" class="menu-item">
             <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
         </a>
-        <a href="new_complaint.php" class="menu-item">
-            <i class="fas fa-plus-circle"></i><span>New Complaint</span>
+        <a href="complaints.php" class="menu-item">
+            <i class="fas fa-file-alt"></i><span>Complaints</span>
         </a>
-        <a href="my_complaints.php" class="menu-item">
-            <i class="fas fa-file-alt"></i><span>My Complaints</span>
+        <a href="escalation-center.php" class="menu-item">
+            <i class="fas fa-arrow-up"></i><span>Escalation Center</span>
         </a>
-        <a href="feedback.php" class="menu-item">
-            <i class="fas fa-comment"></i><span>Feedback</span>
+        <a href="staff-monitoring.php" class="menu-item active">
+            <i class="fas fa-users"></i><span>Staff Monitoring</span>
         </a>
-        <a href="student_announcements.php" class="menu-item">
+        <a href="analytics-reports.php" class="menu-item">
+            <i class="fas fa-chart-line"></i><span>Analytics & Reports</span>
+        </a>
+        <a href="announcements.php" class="menu-item">
             <i class="fas fa-bullhorn"></i><span>Announcements</span>
         </a>
         <a href="profile.php" class="menu-item">
             <i class="fas fa-user-circle"></i><span>Profile</span>
         </a>
-        <a href="change_password.php" class="menu-item">
+        <a href="change-password.php" class="menu-item">
             <i class="fas fa-key"></i><span>Change Password</span>
         </a>
     </div>
@@ -1149,144 +1162,176 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 <div class="main-content">
     <!-- TOP BAR -->
     <div class="top-bar">
-        <a href="new_complaint.php" class="btn-new-complaint">
-            <i class="fas fa-plus-circle"></i> New Complaint
-        </a>
+        <div>
+            <div style="font-size: 0.9rem; font-weight: 600; color: #0a2a5e;">
+                <i class="fas fa-university" style="color: #1a56db;"></i> Welcome, <?php echo htmlspecialchars($rector_name); ?>
+            </div>
+            <div style="font-size: 0.75rem; color: #6b85a0;">Rector</div>
+        </div>
         <div class="profile-info">
             <div class="profile-pic">
                 <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
                     <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile">
                 <?php else: ?>
-                    <?php echo strtoupper(substr($student_name, 0, 1)); ?>
+                    <?php echo strtoupper(substr($rector_name, 0, 1)); ?>
                 <?php endif; ?>
             </div>
             <div class="profile-details">
-                <div class="name"><?php echo htmlspecialchars($student_name); ?></div>
-                <div class="reg"><?php echo htmlspecialchars($student_reg); ?></div>
+                <div class="name"><?php echo htmlspecialchars($rector_name); ?></div>
+                <div class="reg">Rector</div>
             </div>
         </div>
     </div>
 
     <!-- DASHBOARD BODY -->
     <div class="dashboard-body">
-        <?php if (isset($_SESSION['flash_message'])): ?>
-            <script>
-                document.addEventListener('DOMContentLoaded', function() {
-                    showToast('<?php echo addslashes($_SESSION['flash_message']); ?>', '<?php echo $_SESSION['flash_type']; ?>');
-                });
-            </script>
-            <?php unset($_SESSION['flash_message']); unset($_SESSION['flash_type']); ?>
-        <?php endif; ?>
+        <!-- Page Header -->
+        <div class="page-header">
+            <h2>
+                <i class="fas fa-users"></i> Staff Performance Monitoring
+                <span class="subtitle">Track staff performance and complaint resolution</span>
+            </h2>
+        </div>
 
-        <!-- Statistics Cards -->
-        <div class="summary-row">
-            <div class="summary-card" onclick="window.location.href='my_complaints.php'">
-                <div class="icon blue"><i class="fas fa-file-alt"></i></div>
-                <div class="number"><?php echo $stats['total']; ?></div>
-                <div class="label">Total Complaints</div>
+        <!-- Stats Cards -->
+        <div class="stats-cards">
+            <div class="stat-card">
+                <div class="icon">👥</div>
+                <div class="number"><?php echo $overall_stats['total_staff']; ?></div>
+                <div class="label">Total Staff</div>
             </div>
-            <div class="summary-card" onclick="window.location.href='my_complaints.php?status=pending'">
-                <div class="icon yellow"><i class="fas fa-clock"></i></div>
-                <div class="number"><?php echo $stats['pending']; ?></div>
-                <div class="label">Pending</div>
+            <div class="stat-card">
+                <div class="icon">📋</div>
+                <div class="number"><?php echo $overall_stats['total_assigned']; ?></div>
+                <div class="label">Total Assigned Complaints</div>
             </div>
-            <div class="summary-card" onclick="window.location.href='my_complaints.php?status=in_progress'">
-                <div class="icon purple"><i class="fas fa-spinner"></i></div>
-                <div class="number"><?php echo $stats['in_progress']; ?></div>
-                <div class="label">In Progress</div>
+            <div class="stat-card">
+                <div class="icon">✅</div>
+                <div class="number"><?php echo $overall_resolution_rate; ?>%</div>
+                <div class="label">Overall Resolution Rate</div>
             </div>
-            <div class="summary-card" onclick="window.location.href='my_complaints.php?status=resolved'">
-                <div class="icon green"><i class="fas fa-check-circle"></i></div>
-                <div class="number"><?php echo $stats['resolved']; ?></div>
-                <div class="label">Resolved</div>
-            </div>
-            <div class="summary-card" onclick="window.location.href='my_complaints.php?status=escalated'">
-                <div class="icon red"><i class="fas fa-exclamation-triangle"></i></div>
-                <div class="number"><?php echo $stats['escalated']; ?></div>
-                <div class="label">Escalated</div>
+            <div class="stat-card">
+                <div class="icon">⏳</div>
+                <div class="number"><?php echo $overall_stats['total_pending']; ?></div>
+                <div class="label">Pending Complaints</div>
             </div>
         </div>
 
-        <!-- Dashboard Grid: Recent Complaints & Announcements -->
-        <div class="dashboard-grid">
-            <!-- Recent Complaints -->
-            <div class="content-area">
-                <h4><i class="fas fa-clock" style="color:#1a56db;"></i> Recent Complaints</h4>
-                <div class="table-responsive">
-                    <table class="complaints-table">
-                        <thead>
-                            <tr>
-                                <th>Complaint #</th>
-                                <th>Title</th>
-                                <th>Status</th>
-                                <th>Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if (mysqli_num_rows($recent_result) == 0): ?>
-                                <tr><td colspan="4"><div class="no-data"><i class="fas fa-inbox"></i> No complaints submitted yet.</div></td></tr>
-                            <?php else: ?>
-                                <?php while ($row = mysqli_fetch_assoc($recent_result)):
-                                    $status_class = match($row['status']) {
-                                        'pending' => 'badge-pending',
-                                        'in_progress' => 'badge-in-progress',
-                                        'resolved' => 'badge-resolved',
-                                        'escalated' => 'badge-escalated',
-                                        default => ''
-                                    };
-                                ?>
-                                    <tr>
-                                        <td><strong><?php echo $row['complaint_number']; ?></strong></td>
-                                        <td><?php echo htmlspecialchars($row['title']); ?></td>
-                                        <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
-                                        <td style="font-size:0.75rem;"><?php echo date('d/m/y', strtotime($row['created_at'])); ?></td>
-                                    </tr>
-                                <?php endwhile; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-                <?php mysqli_stmt_close($recent_stmt); ?>
-                <div style="margin-top: 16px; text-align: center;">
-                    <a href="my_complaints.php" class="btn-sm" style="background: #6b85a0;">View All Complaints <i class="fas fa-arrow-right"></i></a>
-                </div>
-            </div>
-
-            <!-- Announcements Sidebar -->
-            <div class="announcements-sidebar">
-                <h4>
-                    <i class="fas fa-bullhorn"></i> Announcements
-                    <a href="student_announcements.php" class="view-all">View All →</a>
-                </h4>
-                
-                <?php if (empty($announcements)): ?>
-                    <div class="no-announcements-sidebar">
-                        <i class="fas fa-inbox"></i>
-                        No announcements at the moment.
-                    </div>
+        <!-- Top Performer -->
+        <?php if ($top_performer && $top_performer['total'] > 0): ?>
+        <div class="top-performer">
+            <div class="badge">🏆 Top Performer</div>
+            <div class="avatar">
+                <?php if (!empty($top_performer['profile_pic']) && file_exists('../' . $top_performer['profile_pic'])): ?>
+                    <img src="../<?php echo htmlspecialchars($top_performer['profile_pic']); ?>" alt="Profile">
                 <?php else: ?>
-                    <?php foreach ($announcements as $ann): 
-                        $is_new = (time() - strtotime($ann['created_at'])) < (3 * 24 * 60 * 60);
-                        $sender_name = !empty($ann['sender_name']) ? $ann['sender_name'] : 'System';
-                    ?>
-                        <div class="announcement-summary">
-                            <div class="a-title">
-                                <?php echo htmlspecialchars($ann['title']); ?>
-                                <?php if ($is_new): ?>
-                                    <span class="badge-new">New</span>
-                                <?php endif; ?>
-                            </div>
-                            <div class="a-sender">
-                                <i class="fas fa-user"></i> <?php echo htmlspecialchars($sender_name); ?>
-                            </div>
-                            <div class="a-time">
-                                <i class="far fa-clock"></i> 
-                                <?php echo date('d M Y, h:i A', strtotime($ann['created_at'])); ?>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
+                    <?php echo strtoupper(substr($top_performer['name'], 0, 1)); ?>
                 <?php endif; ?>
             </div>
+            <div class="info">
+                <h4><?php echo htmlspecialchars($top_performer['name']); ?></h4>
+                <div class="role"><?php echo htmlspecialchars($top_performer['role']); ?></div>
+            </div>
+            <div class="metrics">
+                <div class="item">
+                    <div class="num"><?php echo $top_performer['total']; ?></div>
+                    <div class="lbl">Assigned</div>
+                </div>
+                <div class="item">
+                    <div class="num"><?php echo $top_performer['resolved']; ?></div>
+                    <div class="lbl">Resolved</div>
+                </div>
+                <div class="item">
+                    <div class="num"><?php echo $top_performer['resolution_rate']; ?>%</div>
+                    <div class="lbl">Resolution Rate</div>
+                </div>
+                <div class="item">
+                    <div class="num" style="color: <?php echo $top_performer['rating'] == 'Excellent' ? '#10b981' : ($top_performer['rating'] == 'Good' ? '#f59e0b' : '#dc2626'); ?>;">
+                        <?php echo $top_performer['rating_icon']; ?>
+                    </div>
+                    <div class="lbl">Rating</div>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Staff Table -->
+        <div class="content-area">
+            <h4><i class="fas fa-list"></i> All Staff Performance</h4>
+            
+            <?php if (empty($staff_data)): ?>
+                <div style="text-align:center; padding:40px 0; color:#8ba0bc;">
+                    <i class="fas fa-users" style="font-size:2rem; display:block; margin-bottom:10px;"></i>
+                    No staff data available.
+                </div>
+            <?php else: ?>
+            <div class="table-responsive">
+                <table class="staff-table">
+                    <thead>
+                        <tr>
+                            <th>Staff</th>
+                            <th>Role</th>
+                            <th style="text-align:center;">Assigned</th>
+                            <th style="text-align:center;">Resolved</th>
+                            <th style="text-align:center;">Pending</th>
+                            <th style="text-align:center;">In Progress</th>
+                            <th style="text-align:center;">Escalated</th>
+                            <th style="text-align:center;">Rate</th>
+                            <th style="text-align:center;">Avg Response</th>
+                            <th style="text-align:center;">Rating</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($staff_data as $staff): ?>
+                        <tr>
+                            <td>
+                                <div style="display:flex; align-items:center; gap:10px;">
+                                    <div class="staff-avatar">
+                                        <?php if (!empty($staff['profile_pic']) && file_exists('../' . $staff['profile_pic'])): ?>
+                                            <img src="../<?php echo htmlspecialchars($staff['profile_pic']); ?>" alt="Profile">
+                                        <?php else: ?>
+                                            <?php echo strtoupper(substr($staff['name'], 0, 1)); ?>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div>
+                                        <div class="staff-name"><?php echo htmlspecialchars($staff['name']); ?></div>
+                                        <div class="staff-role"><?php echo htmlspecialchars($staff['email']); ?></div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td><span style="font-size:0.7rem; background:#f0f4f9; padding:2px 10px; border-radius:20px;"><?php echo htmlspecialchars($staff['role']); ?></span></td>
+                            <td style="text-align:center; font-weight:600;"><?php echo $staff['total']; ?></td>
+                            <td style="text-align:center; color:#10b981; font-weight:600;"><?php echo $staff['resolved']; ?></td>
+                            <td style="text-align:center; color:#f59e0b; font-weight:600;"><?php echo $staff['pending']; ?></td>
+                            <td style="text-align:center; color:#3b82f6; font-weight:600;"><?php echo $staff['in_progress']; ?></td>
+                            <td style="text-align:center; color:#dc2626; font-weight:600;"><?php echo $staff['escalated']; ?></td>
+                            <td style="text-align:center; font-weight:600;">
+                                <?php echo $staff['resolution_rate']; ?>%
+                            </td>
+                            <td style="text-align:center;">
+                                <?php 
+                                    if ($staff['avg_response'] > 0) {
+                                        if ($staff['avg_response'] < 1) {
+                                            echo round($staff['avg_response'] * 60) . ' min';
+                                        } else {
+                                            echo $staff['avg_response'] . 'h';
+                                        }
+                                    } else {
+                                        echo 'N/A';
+                                    }
+                                ?>
+                            </td>
+                            <td style="text-align:center;">
+                                <span class="rating-badge <?php echo $staff['rating_class']; ?>">
+                                    <?php echo $staff['rating_icon']; ?> <?php echo $staff['rating']; ?>
+                                </span>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
@@ -1449,5 +1494,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         if (e.target === modal) modal.classList.remove('active');
     });
 </script>
+
 </body>
 </html>

@@ -1,60 +1,58 @@
 <?php
 session_start();
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'president') {
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'dean') {
     header("Location: ../index.php");
     exit();
 }
 
 require_once '../includes/connection.php';
 
-$president_id = $_SESSION['user_id'];
-$president_name = $_SESSION['full_name'];
-$president_email = $_SESSION['email'];
+$dean_id = $_SESSION['user_id'];
+$dean_name = $_SESSION['full_name'];
+$dean_email = $_SESSION['email'];
 
-$active_page = $_GET['page'] ?? 'dashboard';
+// Fetch department name (Dean of Students)
+$dept_sql = "SELECT name FROM departments WHERE id = (SELECT department_id FROM users WHERE id = ?)";
+$dept_stmt = mysqli_prepare($conn, $dept_sql);
+mysqli_stmt_bind_param($dept_stmt, "i", $dean_id);
+mysqli_stmt_execute($dept_stmt);
+$dept_result = mysqli_stmt_get_result($dept_stmt);
+$dept_row = mysqli_fetch_assoc($dept_result);
+$dept_name = $dept_row['name'] ?? 'Dean of Students';
+mysqli_stmt_close($dept_stmt);
 
-// Get profile data
-$prof_sql = "SELECT phone_number, profile_picture FROM users WHERE id = ?";
-$prof_stmt = mysqli_prepare($conn, $prof_sql);
-mysqli_stmt_bind_param($prof_stmt, "i", $president_id);
-mysqli_stmt_execute($prof_stmt);
-$prof_result = mysqli_stmt_get_result($prof_stmt);
-$prof_data = mysqli_fetch_assoc($prof_result);
-$phone = $prof_data['phone_number'] ?? '';
-$profile_pic = $prof_data['profile_picture'] ?? '';
-if (!isset($_SESSION['profile_picture']) && $profile_pic) $_SESSION['profile_picture'] = $profile_pic;
-mysqli_stmt_close($prof_stmt);
+// Categories that belong to dean
+$dean_categories = ['Hostel', 'Infrastructure', 'Service', 'Gender issue'];
+$category_in_list = "'" . implode("','", $dean_categories) . "'";
 
-// Handle reply to complaint (only if not escalated)
+// Handle reply to complaint
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
     $complaint_id = intval($_POST['complaint_id']);
     $message = trim($_POST['message']);
     $new_status = $_POST['status'] ?? 'in_progress';
     
-    // Check if complaint is escalated
     $check_sql = "SELECT status FROM complaints WHERE id = ? AND assigned_to = ?";
     $check_stmt = mysqli_prepare($conn, $check_sql);
-    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $president_id);
+    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $dean_id);
     mysqli_stmt_execute($check_stmt);
     $check_result = mysqli_stmt_get_result($check_stmt);
     $check_row = mysqli_fetch_assoc($check_result);
     mysqli_stmt_close($check_stmt);
     if ($check_row && $check_row['status'] === 'escalated') {
-        $_SESSION['flash_message'] = "This complaint has been escalated and is read‑only. You cannot modify it.";
+        $_SESSION['flash_message'] = "This complaint has been escalated and is read‑only.";
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+        header("Location: dean_dashboard.php?page=view-complaint&id=" . $complaint_id);
         exit();
     }
     
     if (!empty($message)) {
         $insert_sql = "INSERT INTO responses (complaint_id, user_id, message) VALUES (?, ?, ?)";
         $insert_stmt = mysqli_prepare($conn, $insert_sql);
-        mysqli_stmt_bind_param($insert_stmt, "iis", $complaint_id, $president_id, $message);
+        mysqli_stmt_bind_param($insert_stmt, "iis", $complaint_id, $dean_id, $message);
         mysqli_stmt_execute($insert_stmt);
         mysqli_stmt_close($insert_stmt);
         
         if ($new_status === 'escalated') {
-            // Find deputy rector
             $deputy_sql = "SELECT id FROM users WHERE role = 'deputy_rector' LIMIT 1";
             $deputy_stmt = mysqli_prepare($conn, $deputy_sql);
             mysqli_stmt_execute($deputy_stmt);
@@ -70,13 +68,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
                 mysqli_stmt_close($update_stmt);
                 $_SESSION['flash_message'] = "Complaint escalated to Deputy Rector.";
             } else {
-                $_SESSION['flash_message'] = "Deputy Rector not found. Cannot escalate.";
+                $_SESSION['flash_message'] = "Deputy Rector not found.";
                 $_SESSION['flash_type'] = "error";
-                header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+                header("Location: dean_dashboard.php?page=view-complaint&id=" . $complaint_id);
                 exit();
             }
         } else {
-            $update_sql = "UPDATE complaints SET status = ? WHERE id = ?";
+            $update_sql = "UPDATE complaints SET status = ?, updated_at = NOW() WHERE id = ?";
             $update_stmt = mysqli_prepare($conn, $update_sql);
             mysqli_stmt_bind_param($update_stmt, "si", $new_status, $complaint_id);
             mysqli_stmt_execute($update_stmt);
@@ -85,15 +83,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
         $_SESSION['flash_message'] = "Reply sent successfully!";
         $_SESSION['flash_type'] = "success";
         if ($new_status === 'escalated') {
-            header("Location: president_dashboard.php?page=escalated");
+            header("Location: dean_dashboard.php?page=escalated");
         } else {
-            header("Location: president_dashboard.php?page=complaints");
+            header("Location: dean_dashboard.php?page=complaints");
         }
         exit();
     } else {
         $_SESSION['flash_message'] = "Message cannot be empty.";
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+        header("Location: dean_dashboard.php?page=view-complaint&id=" . $complaint_id);
         exit();
     }
 }
@@ -105,15 +103,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     
     $check_sql = "SELECT status FROM complaints WHERE id = ? AND assigned_to = ?";
     $check_stmt = mysqli_prepare($conn, $check_sql);
-    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $president_id);
+    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $dean_id);
     mysqli_stmt_execute($check_stmt);
     $check_result = mysqli_stmt_get_result($check_stmt);
     $check_row = mysqli_fetch_assoc($check_result);
     mysqli_stmt_close($check_stmt);
     if ($check_row && $check_row['status'] === 'escalated') {
-        $_SESSION['flash_message'] = "This complaint has been escalated and is read‑only. You cannot modify it.";
+        $_SESSION['flash_message'] = "This complaint has been escalated and is read‑only.";
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+        header("Location: dean_dashboard.php?page=view-complaint&id=" . $complaint_id);
         exit();
     }
     
@@ -126,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         $deputy_id = $deputy_row['id'] ?? null;
         mysqli_stmt_close($deputy_stmt);
         if ($deputy_id) {
-            $update_sql = "UPDATE complaints SET status = ?, escalated_to = ? WHERE id = ?";
+            $update_sql = "UPDATE complaints SET status = ?, escalated_to = ?, updated_at = NOW() WHERE id = ?";
             $update_stmt = mysqli_prepare($conn, $update_sql);
             mysqli_stmt_bind_param($update_stmt, "sii", $new_status, $deputy_id, $complaint_id);
             mysqli_stmt_execute($update_stmt);
@@ -135,11 +133,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         } else {
             $_SESSION['flash_message'] = "Deputy Rector not found.";
             $_SESSION['flash_type'] = "error";
-            header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+            header("Location: dean_dashboard.php?page=view-complaint&id=" . $complaint_id);
             exit();
         }
     } else {
-        $update_sql = "UPDATE complaints SET status = ? WHERE id = ?";
+        $update_sql = "UPDATE complaints SET status = ?, updated_at = NOW() WHERE id = ?";
         $update_stmt = mysqli_prepare($conn, $update_sql);
         mysqli_stmt_bind_param($update_stmt, "si", $new_status, $complaint_id);
         mysqli_stmt_execute($update_stmt);
@@ -148,9 +146,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     }
     $_SESSION['flash_type'] = "success";
     if ($new_status === 'escalated') {
-        header("Location: president_dashboard.php?page=escalated");
+        header("Location: dean_dashboard.php?page=escalated");
     } else {
-        header("Location: president_dashboard.php?page=complaints");
+        header("Location: dean_dashboard.php?page=complaints");
     }
     exit();
 }
@@ -174,7 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             $upload_dir = '../uploads/profiles/';
             if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $new_filename = 'president_' . $president_id . '_' . time() . '.' . $extension;
+            $new_filename = 'dean_' . $dean_id . '_' . time() . '.' . $extension;
             $destination = $upload_dir . $new_filename;
             if (move_uploaded_file($file['tmp_name'], $destination)) {
                 $new_profile_picture = 'uploads/profiles/' . $new_filename;
@@ -189,19 +187,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     if (empty($errors)) {
         $update_sql = "UPDATE users SET full_name = ?, phone_number = ?, profile_picture = ? WHERE id = ?";
         $update_stmt = mysqli_prepare($conn, $update_sql);
-        mysqli_stmt_bind_param($update_stmt, "sssi", $new_full_name, $new_phone, $new_profile_picture, $president_id);
+        mysqli_stmt_bind_param($update_stmt, "sssi", $new_full_name, $new_phone, $new_profile_picture, $dean_id);
         mysqli_stmt_execute($update_stmt);
         mysqli_stmt_close($update_stmt);
         $_SESSION['full_name'] = $new_full_name;
         $_SESSION['profile_picture'] = $new_profile_picture;
         $_SESSION['flash_message'] = "Profile updated successfully!";
         $_SESSION['flash_type'] = "success";
-        header("Location: president_dashboard.php?page=profile");
+        header("Location: dean_dashboard.php?page=profile");
         exit();
     } else {
         $_SESSION['flash_message'] = implode("<br>", $errors);
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=profile");
+        header("Location: dean_dashboard.php?page=profile");
         exit();
     }
 }
@@ -222,17 +220,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
         $hashed = password_hash($new_password, PASSWORD_DEFAULT);
         $pass_sql = "UPDATE users SET password_hash = ? WHERE id = ?";
         $pass_stmt = mysqli_prepare($conn, $pass_sql);
-        mysqli_stmt_bind_param($pass_stmt, "si", $hashed, $president_id);
+        mysqli_stmt_bind_param($pass_stmt, "si", $hashed, $dean_id);
         mysqli_stmt_execute($pass_stmt);
         mysqli_stmt_close($pass_stmt);
         $_SESSION['flash_message'] = "Password changed successfully!";
         $_SESSION['flash_type'] = "success";
-        header("Location: president_dashboard.php?page=change-password");
+        header("Location: dean_dashboard.php?page=change-password");
         exit();
     } else {
         $_SESSION['flash_message'] = implode("<br>", $errors);
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=change-password");
+        header("Location: dean_dashboard.php?page=change-password");
         exit();
     }
 }
@@ -246,9 +244,9 @@ if (isset($_SESSION['flash_message'])) {
     unset($_SESSION['flash_type']);
 }
 
+$active_page = $_GET['page'] ?? 'dashboard';
 $complaint_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
-// Filters & pagination
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $priority_filter = isset($_GET['priority']) ? $_GET['priority'] : '';
 $sort = isset($_GET['sort']) ? $_GET['sort'] : 'newest';
@@ -256,7 +254,48 @@ $page = isset($_GET['p']) ? max(1, intval($_GET['p'])) : 1;
 $limit = 20;
 $offset = ($page - 1) * $limit;
 
-// Get announcements
+// Get statistics for dashboard
+$stats_sql = "SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN c.status = 'pending' THEN 1 ELSE 0 END) as pending,
+    SUM(CASE WHEN c.status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+    SUM(CASE WHEN c.status = 'resolved' THEN 1 ELSE 0 END) as resolved,
+    SUM(CASE WHEN c.status = 'escalated' THEN 1 ELSE 0 END) as escalated
+    FROM complaints c
+    JOIN categories cat ON c.category_id = cat.id
+    WHERE c.assigned_to = ? AND cat.name IN ($category_in_list)";
+$stats_stmt = mysqli_prepare($conn, $stats_sql);
+mysqli_stmt_bind_param($stats_stmt, "i", $dean_id);
+mysqli_stmt_execute($stats_stmt);
+$stats_result = mysqli_stmt_get_result($stats_stmt);
+$stats = mysqli_fetch_assoc($stats_result);
+mysqli_stmt_close($stats_stmt);
+
+// Get LATEST 5 complaints for dashboard
+$recent_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, u.full_name 
+              FROM complaints c 
+              JOIN users u ON c.student_id = u.id 
+              JOIN categories cat ON c.category_id = cat.id
+              WHERE c.assigned_to = ? AND cat.name IN ($category_in_list)
+              ORDER BY c.created_at DESC LIMIT 5";
+$recent_stmt = mysqli_prepare($conn, $recent_sql);
+mysqli_stmt_bind_param($recent_stmt, "i", $dean_id);
+mysqli_stmt_execute($recent_stmt);
+$recent_result = mysqli_stmt_get_result($recent_stmt);
+
+// Get profile data
+$prof_sql = "SELECT phone_number, profile_picture FROM users WHERE id = ?";
+$prof_stmt = mysqli_prepare($conn, $prof_sql);
+mysqli_stmt_bind_param($prof_stmt, "i", $dean_id);
+mysqli_stmt_execute($prof_stmt);
+$prof_result = mysqli_stmt_get_result($prof_stmt);
+$prof_data = mysqli_fetch_assoc($prof_result);
+$phone = $prof_data['phone_number'] ?? '';
+$profile_pic = $prof_data['profile_picture'] ?? '';
+if (!isset($_SESSION['profile_picture']) && $profile_pic) $_SESSION['profile_picture'] = $profile_pic;
+mysqli_stmt_close($prof_stmt);
+
+// Get latest announcements (4 tu - summary with sender)
 $announcements = [];
 $table_check = mysqli_query($conn, "SHOW TABLES LIKE 'announcements'");
 if ($table_check && mysqli_num_rows($table_check) > 0) {
@@ -265,12 +304,14 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                          LEFT JOIN users u ON a.created_by = u.id
                          WHERE a.is_active = 1 
                          AND (a.target_type = 'all' 
-                              OR a.target_type = 'students'
+                              OR a.target_type = 'staff'
+                              OR (a.target_type = 'department' AND a.target_id = ?)
                               OR (a.target_type = 'individual' AND a.target_id = ?))
                          ORDER BY a.created_at DESC LIMIT 4";
     $ann_stmt = mysqli_prepare($conn, $announcement_sql);
     if ($ann_stmt) {
-        mysqli_stmt_bind_param($ann_stmt, "i", $president_id);
+        $dept_id = $_SESSION['department_id'] ?? null;
+        mysqli_stmt_bind_param($ann_stmt, "ii", $dept_id, $dean_id);
         mysqli_stmt_execute($ann_stmt);
         $ann_result = mysqli_stmt_get_result($ann_stmt);
         while ($ann = mysqli_fetch_assoc($ann_result)) {
@@ -285,15 +326,16 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>IAASO President Dashboard - IAA CFMS</title>
+    <title>Dean Dashboard - IAA CFMS</title>
     <link rel="icon" type="image/png" href="../images/logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         /* ============================================
-           COMPLETE STYLES - Consistent with Dashboard
+           UI SANA NA STUDENT DASHBOARD
            ============================================ */
         
+        /* ---------- RESET & BASE ---------- */
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
@@ -336,7 +378,10 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             overflow: hidden;
         }
 
-        .toast.hide { animation: toastSlideOut 0.4s ease-in forwards; }
+        .toast.hide {
+            animation: toastSlideOut 0.4s ease-in forwards;
+        }
+
         .toast-success { border-left: 4px solid #10b981; }
         .toast-success i { color: #10b981; }
         .toast-error { border-left: 4px solid #dc2626; }
@@ -344,12 +389,23 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         .toast-info { border-left: 4px solid #1a56db; }
         .toast-info i { color: #1a56db; }
 
-        .toast i { font-size: 1.3rem; flex-shrink: 0; }
-        .toast .toast-message { flex: 1; color: #1f2c40; }
+        .toast i {
+            font-size: 1.3rem;
+            flex-shrink: 0;
+        }
+        .toast .toast-message {
+            flex: 1;
+            color: #1f2c40;
+        }
         .toast .toast-close {
-            background: none; border: none; color: #8ba0bc;
-            cursor: pointer; font-size: 1rem; padding: 4px;
-            transition: color 0.2s; flex-shrink: 0;
+            background: none;
+            border: none;
+            color: #8ba0bc;
+            cursor: pointer;
+            font-size: 1rem;
+            padding: 4px;
+            transition: color 0.2s;
+            flex-shrink: 0;
         }
         .toast .toast-close:hover { color: #dc2626; }
 
@@ -363,7 +419,10 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         }
 
         .toast .toast-progress {
-            position: absolute; bottom: 0; left: 0; height: 3px;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
             border-radius: 0 0 14px 14px;
             background: rgba(0, 0, 0, 0.1);
             animation: toastProgress 3.5s linear forwards;
@@ -396,6 +455,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         }
         .sidebar.collapsed { width: 80px; }
 
+        /* ========== SIDEBAR HEADER ========== */
         .sidebar-header {
             padding: 28px 20px 20px 20px;
             border-bottom: 1px solid rgba(10,42,94,0.08);
@@ -441,7 +501,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         .sidebar.collapsed .brand { font-size: 1rem; }
         .sidebar.collapsed .toggle-inline { display: flex; }
 
-        /* ========== SIDEBAR MENU ========== */
+        /* ========== SIDEBAR MENU - BLUE SAFI (#1a56db) ========== */
         .sidebar-menu { 
             flex: 1; 
             padding: 8px 14px;
@@ -490,7 +550,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             color: #ffffff;
         }
 
-        /* ========== LOGOUT ========== */
+        /* ========== LOGOUT - FIXED, NO TRANSFORM ========== */
         .logout-item { 
             margin-top: auto; 
             margin-bottom: 24px; 
@@ -584,49 +644,175 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         /* ========== SUMMARY CARDS ========== */
         .summary-row {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 20px;
             margin-bottom: 28px;
         }
 
         .summary-card {
             background: white;
-            border-radius: 16px;
-            padding: 18px 16px;
-            text-align: center;
-            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
+            border-radius: 20px;
+            padding: 22px 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            box-shadow: 0 2px 12px rgba(10,42,94,0.06);
             border: 1px solid rgba(255,255,255,0.6);
             transition: all 0.2s;
         }
         .summary-card:hover {
-            transform: translateY(-3px);
+            transform: translateY(-4px);
             box-shadow: 0 8px 30px rgba(10,42,94,0.10);
         }
-        .summary-card .icon {
+
+        .summary-card .icon-wrapper {
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 1.5rem;
-            margin-bottom: 4px;
+            flex-shrink: 0;
         }
-        .summary-card .number {
-            font-size: 1.5rem;
+        .summary-card .icon-wrapper.blue { background: #dbeafe; color: #1e40af; }
+        .summary-card .icon-wrapper.yellow { background: #fef3c7; color: #b45309; }
+        .summary-card .icon-wrapper.purple { background: #ede9fe; color: #6d28d9; }
+        .summary-card .icon-wrapper.green { background: #d1fae5; color: #065f46; }
+        .summary-card .icon-wrapper.red { background: #fee2e2; color: #991b1b; }
+
+        .summary-card .info { flex: 1; }
+        .summary-card .info .number {
+            font-size: 1.8rem;
             font-weight: 800;
             color: #0a2a5e;
             line-height: 1.2;
         }
-        .summary-card .label {
+        .summary-card .info .label {
             color: #6b85a0;
-            font-size: 0.7rem;
+            font-size: 0.85rem;
             font-weight: 500;
-            margin-top: 2px;
         }
-        .summary-card .icon.blue { color: #1a56db; }
-        .summary-card .icon.yellow { color: #f59e0b; }
-        .summary-card .icon.purple { color: #6d28d9; }
-        .summary-card .icon.green { color: #10b981; }
-        .summary-card .icon.red { color: #dc2626; }
 
-        /* ========== BUTTONS ========== */
+        /* ========== GRIDI 70% / 30% ========== */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 70% 30%;
+            gap: 24px;
+            margin-top: 0;
+        }
+
+        /* ---------- TABLE SECTION (70%) ---------- */
+        .content-area {
+            background: white;
+            border-radius: 20px;
+            padding: 24px 28px;
+            border: 1px solid rgba(255,255,255,0.6);
+            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
+            min-height: 350px;
+        }
+        .content-area h4 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #0a2a5e;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* ---------- ANNOUNCEMENTS SIDEBAR (30%) ---------- */
+        .announcements-sidebar {
+            background: white;
+            border-radius: 20px;
+            padding: 24px 22px;
+            border: 1px solid rgba(255,255,255,0.6);
+            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
+            min-height: 350px;
+        }
+        .announcements-sidebar h4 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #0a2a5e;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .announcements-sidebar h4 i {
+            color: #f59e0b;
+        }
+        .announcements-sidebar .view-all {
+            font-size: 0.75rem;
+            color: #1a56db;
+            text-decoration: none;
+            font-weight: 600;
+            margin-left: auto;
+        }
+        .announcements-sidebar .view-all:hover {
+            text-decoration: underline;
+        }
+
+        /* Announcement Item - Title, Sender, Time ONLY */
+        .announcement-summary {
+            padding: 14px 0;
+            border-bottom: 1px solid #f0f4f9;
+        }
+        .announcement-summary:last-child {
+            border-bottom: none;
+        }
+        .announcement-summary .a-title {
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #0a2a5e;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .announcement-summary .a-title .badge-new {
+            background: #1a56db;
+            color: white;
+            font-size: 0.55rem;
+            padding: 2px 10px;
+            border-radius: 30px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .announcement-summary .a-sender {
+            font-size: 0.78rem;
+            color: #6b85a0;
+            margin-top: 3px;
+        }
+        .announcement-summary .a-sender i {
+            margin-right: 4px;
+            color: #1a56db;
+        }
+        .announcement-summary .a-time {
+            font-size: 0.65rem;
+            color: #8ba0bc;
+            margin-top: 3px;
+        }
+        .announcement-summary .a-time i {
+            margin-right: 4px;
+        }
+
+        .no-announcements-sidebar {
+            color: #8ba0bc;
+            text-align: center;
+            padding: 30px 0;
+            font-size: 0.9rem;
+        }
+        .no-announcements-sidebar i {
+            font-size: 1.5rem;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        /* ---------- BUTTONS - BLUE ========== */
         .btn-sm {
-            padding: 5px 14px;
+            padding: 6px 20px;
             border-radius: 30px;
             background: #1a56db;
             color: white;
@@ -645,14 +831,33 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             color: white;
         }
 
+        .btn-secondary-sm {
+            padding: 6px 20px;
+            border-radius: 30px;
+            background: #6b85a0;
+            color: white;
+            text-decoration: none;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: inline-block;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+        .btn-secondary-sm:hover {
+            background: #4a5a7a;
+            transform: translateY(-2px);
+            color: white;
+        }
+
         .btn-submit {
             background: #1a56db;
             color: white;
             border: none;
-            padding: 12px 28px;
+            padding: 14px 36px;
             border-radius: 30px;
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             cursor: pointer;
             transition: all 0.2s;
         }
@@ -661,17 +866,10 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             transform: translateY(-2px);
             box-shadow: 0 6px 20px rgba(26, 86, 219, 0.3);
         }
-        .btn-submit.warning {
-            background: #f59e0b;
-            color: #1f2c40;
-        }
-        .btn-submit.warning:hover {
-            background: #d97706;
-        }
 
         /* ---------- BADGE ---------- */
         .badge {
-            padding: 3px 10px;
+            padding: 3px 12px;
             border-radius: 30px;
             font-size: 0.65rem;
             font-weight: 600;
@@ -682,7 +880,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         .badge-in-progress { background: #dbeafe; color: #1e40af; }
         .badge-resolved { background: #d1fae5; color: #065f46; }
         .badge-escalated { background: #fee2e2; color: #991b1b; }
-        .badge-new { background: #1a56db; color: white; font-size: 0.55rem; padding: 2px 10px; border-radius: 30px; font-weight: 600; text-transform: uppercase; }
 
         /* ---------- TABLE ---------- */
         .table-responsive { 
@@ -694,74 +891,69 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         .complaints-table {
             width: 100%;
             border-collapse: collapse;
-            font-size: 0.85rem;
+            font-size: 0.9rem;
         }
         .complaints-table thead th {
             background: #f8fafc;
-            padding: 10px 14px;
+            padding: 12px 14px;
             text-align: left;
             font-weight: 600;
             color: #4a5a7a;
-            font-size: 0.7rem;
+            font-size: 0.75rem;
             text-transform: uppercase;
             letter-spacing: 0.3px;
             border-bottom: 2px solid #e5edf5;
         }
         .complaints-table tbody td {
-            padding: 10px 14px;
+            padding: 12px 14px;
             border-bottom: 1px solid #f0f4f9;
             color: #1f2c40;
-            vertical-align: middle;
+            font-size: 0.85rem;
         }
         .complaints-table tbody tr:hover {
             background: #fafcff;
         }
-        .complaints-table tbody tr:last-child td {
-            border-bottom: none;
-        }
+        .complaints-table tbody tr:last-child td { border-bottom: none; }
 
-        /* ---------- FILTERS BAR ========== */
+        /* ---------- FILTERS BAR ---------- */
         .filters-bar {
-            background: white;
-            border-radius: 16px;
-            padding: 16px 20px;
-            margin-bottom: 24px;
-            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
-            border: 1px solid rgba(255,255,255,0.6);
-        }
-        .filters-row {
             display: flex;
             flex-wrap: wrap;
-            gap: 12px;
-            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: flex-end;
+            background: #f8fafc;
+            padding: 15px 20px;
+            border-radius: 16px;
         }
-        .filter-item {
+        .filter-group {
             flex: 1;
-            min-width: 140px;
+            min-width: 150px;
         }
-        .filter-item label {
-            display: none;
+        .filter-group label {
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 600;
+            margin-bottom: 3px;
+            color: #4a5a7a;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
         }
-        .filter-item input, .filter-item select {
+        .filter-group input, .filter-group select {
             width: 100%;
             padding: 8px 12px;
             border: 1.5px solid #e5edf5;
             border-radius: 10px;
             font-size: 0.85rem;
-            background: #fafcff;
+            background: white;
             transition: border 0.2s;
-            font-family: 'Inter', sans-serif;
-            color: #1f2c40;
         }
-        .filter-item input:focus, .filter-item select:focus {
+        .filter-group input:focus, .filter-group select:focus {
             outline: none;
             border-color: #1a56db;
             box-shadow: 0 0 0 3px rgba(26,86,219,0.08);
         }
-        .filter-item input::placeholder {
-            color: #8ba0bc;
-        }
-        .filter-item .filter-btn {
+        .filter-group .filter-btn {
             background: #1a56db;
             color: white;
             border: none;
@@ -771,59 +963,28 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             font-weight: 500;
             transition: all 0.2s;
             width: 100%;
-            font-family: 'Inter', sans-serif;
-            font-size: 0.85rem;
         }
-        .filter-item .filter-btn:hover {
+        .filter-group .filter-btn:hover {
             background: #0d3b8a;
-        }
-
-        /* ---------- CONTENT AREA ---------- */
-        .content-area {
-            background: white;
-            border-radius: 20px;
-            padding: 24px 28px;
-            border: 1px solid rgba(255,255,255,0.6);
-            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
-            min-height: 350px;
-        }
-        .content-area h4 {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #0a2a5e;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .content-area h4 i {
-            color: #1a56db;
-        }
-
-        .no-data {
-            text-align: center;
-            padding: 40px 20px;
-            color: #8ba0bc;
-        }
-        .no-data i {
-            font-size: 2rem;
-            display: block;
-            margin-bottom: 10px;
-            color: #dbeafe;
+            transform: translateY(-1px);
         }
 
         /* ---------- PAGINATION ---------- */
         .pagination {
             display: flex;
             justify-content: center;
-            align-items: center;
             gap: 6px;
-            margin-top: 24px;
+            margin-top: 20px;
             flex-wrap: wrap;
         }
         .pagination a, .pagination span {
-            padding: 6px 14px;
-            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 38px;
+            height: 38px;
+            padding: 0 14px;
+            border-radius: 10px;
             text-decoration: none;
             font-size: 0.85rem;
             font-weight: 500;
@@ -891,6 +1052,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             font-size: 0.95rem;
         }
 
+        /* ---------- CONVERSATION ---------- */
         .conversation {
             max-height: 400px;
             overflow-y: auto;
@@ -937,20 +1099,17 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             font-size: 0.9rem;
         }
 
-        .readonly-notice {
-            background: #f0f4f9;
-            padding: 16px 20px;
-            border-radius: 12px;
-            margin-top: 20px;
-            text-align: center;
-            color: #6b85a0;
-            border: 1px dashed #cbd5e1;
+        /* ---------- REPLY & STATUS SECTIONS ---------- */
+        .reply-section, .status-section {
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid #e5edf5;
         }
-        .readonly-notice i {
-            display: block;
-            font-size: 1.5rem;
-            margin-bottom: 8px;
-            color: #1a56db;
+        .reply-section h5, .status-section h5 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #0a2a5e;
+            margin-bottom: 12px;
         }
 
         /* ---------- FORMS ---------- */
@@ -961,9 +1120,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             color: #0a2a5e;
             margin-bottom: 6px;
             font-size: 0.9rem;
-        }
-        .form-group label .required {
-            color: #dc2626;
         }
         .form-group input, .form-group select, .form-group textarea {
             width: 100%;
@@ -983,124 +1139,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         .form-group textarea {
             resize: vertical;
             min-height: 100px;
-        }
-        .form-group .helper-text {
-            font-size: 0.78rem;
-            color: #8ba0bc;
-            margin-top: 4px;
-        }
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-
-        .reply-section, .status-section {
-            margin-top: 24px;
-            padding-top: 20px;
-            border-top: 1px solid #e5edf5;
-        }
-        .reply-section h5, .status-section h5 {
-            font-size: 0.95rem;
-            font-weight: 700;
-            color: #0a2a5e;
-            margin-bottom: 12px;
-        }
-
-        /* ---------- ANNOUNCEMENT SIDEBAR ---------- */
-        .announcements-sidebar {
-            background: white;
-            border-radius: 20px;
-            padding: 24px 22px;
-            border: 1px solid rgba(255,255,255,0.6);
-            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
-            min-height: 300px;
-        }
-        .announcements-sidebar h4 {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #0a2a5e;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .announcements-sidebar h4 i {
-            color: #f59e0b;
-        }
-        .announcements-sidebar .view-all {
-            font-size: 0.75rem;
-            color: #1a56db;
-            text-decoration: none;
-            font-weight: 600;
-            margin-left: auto;
-        }
-        .announcements-sidebar .view-all:hover {
-            text-decoration: underline;
-        }
-
-        .announcement-summary {
-            padding: 14px 0;
-            border-bottom: 1px solid #f0f4f9;
-        }
-        .announcement-summary:last-child {
-            border-bottom: none;
-        }
-        .announcement-summary .a-title {
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: #0a2a5e;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .announcement-summary .a-title .badge-new {
-            background: #1a56db;
-            color: white;
-            font-size: 0.55rem;
-            padding: 2px 10px;
-            border-radius: 30px;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-        .announcement-summary .a-sender {
-            font-size: 0.78rem;
-            color: #6b85a0;
-            margin-top: 3px;
-        }
-        .announcement-summary .a-sender i {
-            margin-right: 4px;
-            color: #1a56db;
-        }
-        .announcement-summary .a-time {
-            font-size: 0.65rem;
-            color: #8ba0bc;
-            margin-top: 3px;
-        }
-        .announcement-summary .a-time i {
-            margin-right: 4px;
-        }
-
-        .no-announcements-sidebar {
-            color: #8ba0bc;
-            text-align: center;
-            padding: 30px 0;
-            font-size: 0.9rem;
-        }
-        .no-announcements-sidebar i {
-            font-size: 1.5rem;
-            display: block;
-            margin-bottom: 8px;
-        }
-
-        /* ---------- GRID LAYOUT ---------- */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 70% 30%;
-            gap: 24px;
-            margin-top: 24px;
         }
 
         /* ---------- MODAL ---------- */
@@ -1207,209 +1245,132 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         @media (max-width: 1024px) {
             .dashboard-body { padding: 20px 24px; }
             .top-bar { padding: 14px 24px; }
-            .form-row { grid-template-columns: 1fr; }
-            .complaint-detail-grid { grid-template-columns: 1fr; }
-            .dashboard-grid { grid-template-columns: 1fr; }
+            .content-area { padding: 20px 24px; min-height: auto; }
+            .summary-row { grid-template-columns: repeat(3, 1fr); }
+            .dashboard-grid { grid-template-columns: 1fr; gap: 20px; }
         }
 
         @media (max-width: 768px) {
-            .sidebar {
-                width: 70px !important;
-                overflow: hidden;
-                transition: width 0.3s ease;
-            }
+            .sidebar { width: 70px !important; overflow: hidden; }
             .sidebar:not(.collapsed) { width: 70px !important; }
             .sidebar.collapsed { width: 70px !important; }
             
-            .brand {
-                font-size: 0.8rem !important;
-                text-align: center;
-            }
+            .brand { font-size: 0.8rem !important; }
             .brand span { display: none !important; }
             .row-tagline { display: none !important; }
-            .row-cfms {
-                flex-direction: column !important;
-                gap: 4px !important;
-                justify-content: center !important;
-                align-items: center !important;
-            }
-            .toggle-inline {
-                display: flex !important;
-                font-size: 0.9rem;
-                width: 28px;
-                height: 28px;
-            }
+            .row-cfms { flex-direction: column !important; gap: 4px !important; justify-content: center !important; align-items: center !important; }
+            .toggle-inline { display: flex !important; }
             .toggle-standalone { display: none !important; }
             
-            .menu-item {
-                justify-content: center !important;
-                padding: 12px 0 !important;
-                margin: 12px 0 !important;
-                gap: 0 !important;
-                border-radius: 10px !important;
-            }
+            .menu-item { justify-content: center !important; padding: 12px 0 !important; margin: 4px 0 !important; gap: 0 !important; border-radius: 10px !important; }
             .menu-item span { display: none !important; }
-            .menu-item i {
-                font-size: 1.3rem !important;
-                width: 100% !important;
-                text-align: center !important;
-                margin: 0 !important;
-            }
+            .menu-item i { font-size: 1.3rem !important; width: 100% !important; text-align: center !important; margin: 0 !important; }
             .menu-item:hover { transform: none !important; }
             
             .logout-item .menu-item span { display: none !important; }
             .logout-item .menu-item i { font-size: 1.3rem !important; }
-            .logout-item {
-                margin-bottom: 20px;
-                padding-top: 16px;
-            }
 
-            .main-content {
-                margin-left: 70px !important;
-                transition: margin-left 0.3s ease;
+            .main-content { margin-left: 70px !important; }
+            .sidebar.collapsed ~ .main-content { margin-left: 70px !important; }
+
+            .dashboard-body { padding: 16px; }
+            .top-bar { padding: 12px 16px; gap: 10px; }
+
+            .profile-details .name { font-size: 0.8rem; }
+            .profile-details .reg { font-size: 0.6rem; }
+            .profile-pic { width: 36px; height: 36px; }
+
+            .content-area { padding: 16px; border-radius: 16px; }
+            .content-area h4 { font-size: 0.95rem; }
+
+            .summary-row { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+            .summary-card { padding: 16px 14px; min-height: 80px; }
+            .summary-card .icon-wrapper { width: 40px; height: 40px; font-size: 1.2rem; }
+            .summary-card .info .number { font-size: 1.4rem; }
+
+            .dashboard-grid { grid-template-columns: 1fr; gap: 16px; }
+
+            .filters-bar { flex-direction: column; padding: 12px 16px; }
+            .filter-group { min-width: unset; width: 100%; }
+
+            .complaints-table thead th,
+            .complaints-table tbody td { padding: 8px 8px; font-size: 0.7rem; }
+            .complaints-table thead th { font-size: 0.6rem; }
+            .btn-sm { padding: 4px 12px; font-size: 0.6rem; }
+
+            .complaint-detail-grid { grid-template-columns: 1fr; padding: 16px; gap: 10px; }
+
+            .announcements-sidebar { min-height: auto; padding: 16px; }
+
+            .reply-section, .status-section { margin-top: 16px; padding-top: 16px; }
+            .btn-submit { width: 100%; justify-content: center; }
+
+            .toast-container {
+                top: 12px;
+                right: 12px;
+                max-width: calc(100% - 24px);
             }
-            .sidebar.collapsed ~ .main-content {
-                margin-left: 70px !important;
-            }
+        }
+
+        @media (max-width: 480px) {
+            .sidebar { width: 60px !important; }
+            .sidebar:not(.collapsed) { width: 60px !important; }
+            .sidebar.collapsed { width: 60px !important; }
+            
+            .brand { font-size: 0.7rem !important; }
+            .menu-item { padding: 10px 0 !important; margin: 3px 0 !important; }
+            .menu-item i { font-size: 1.1rem !important; }
+            .logout-item .menu-item i { font-size: 1.1rem !important; }
+
+            .main-content { margin-left: 60px !important; }
+            .sidebar.collapsed ~ .main-content { margin-left: 60px !important; }
 
             .dashboard-body { padding: 12px; }
             .top-bar { padding: 10px 12px; gap: 8px; }
-
+            .profile-pic { width: 32px; height: 32px; }
             .profile-details .name { font-size: 0.7rem; }
             .profile-details .reg { font-size: 0.5rem; }
-            .profile-pic { width: 32px; height: 32px; }
 
-            .summary-row {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 10px;
-            }
-            .summary-card {
-                padding: 12px 10px;
-            }
-            .summary-card .number {
-                font-size: 1.2rem;
-            }
-            .summary-card .label {
-                font-size: 0.6rem;
-            }
+            .content-area { padding: 12px; border-radius: 12px; }
+            .content-area h4 { font-size: 0.85rem; }
 
-            .filters-bar {
-                padding: 12px 14px;
-            }
-            .filters-row {
-                gap: 8px;
-            }
-            .filter-item {
-                min-width: 100%;
-                flex: 1 1 100%;
-            }
-
-            .content-area {
-                padding: 16px;
-                border-radius: 12px;
-            }
-            .content-area h4 {
-                font-size: 0.85rem;
-            }
-
-            .announcements-sidebar {
-                padding: 16px;
-                min-height: auto;
-            }
+            .summary-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+            .summary-card { padding: 12px 10px; min-height: 70px; gap: 10px; border-radius: 12px; }
+            .summary-card .icon-wrapper { width: 32px; height: 32px; font-size: 0.9rem; }
+            .summary-card .info .number { font-size: 1.1rem; }
+            .summary-card .info .label { font-size: 0.6rem; }
 
             .complaints-table thead th,
-            .complaints-table tbody td {
-                padding: 8px 10px;
-                font-size: 0.7rem;
-            }
-            .badge {
-                font-size: 0.55rem;
-                padding: 2px 8px;
-            }
-            .btn-sm {
-                font-size: 0.55rem;
-                padding: 3px 10px;
-            }
+            .complaints-table tbody td { padding: 6px 6px; font-size: 0.6rem; }
+            .complaints-table thead th { font-size: 0.55rem; }
+            .btn-sm { padding: 3px 10px; font-size: 0.55rem; }
 
-            .complaint-detail-grid {
-                grid-template-columns: 1fr;
-                padding: 12px;
-                gap: 10px;
-            }
-            .complaint-detail-grid .detail-item .label {
-                font-size: 0.6rem;
-            }
-            .complaint-detail-grid .detail-item .value {
-                font-size: 0.82rem;
-            }
+            .complaint-detail-grid { padding: 12px; gap: 8px; }
+            .complaint-detail-grid .detail-item .label { font-size: 0.6rem; }
+            .complaint-detail-grid .detail-item .value { font-size: 0.82rem; }
 
-            .description-box {
-                padding: 12px;
-            }
-            .description-box .value {
-                font-size: 0.85rem;
-            }
+            .description-box { padding: 12px 16px; }
+            .description-box .value { font-size: 0.85rem; }
 
-            .conversation {
-                padding: 10px 12px;
-                max-height: 300px;
-            }
-            .message {
-                padding: 10px 14px;
-            }
-            .message-header {
-                font-size: 0.7rem;
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 4px;
-            }
-            .message-body {
-                font-size: 0.82rem;
-            }
+            .conversation { padding: 12px 14px; max-height: 250px; }
+            .message { padding: 10px 14px; }
+            .message-header { font-size: 0.7rem; flex-direction: column; align-items: flex-start; gap: 4px; }
+            .message-body { font-size: 0.82rem; }
 
-            .announcement-summary .a-title {
-                font-size: 0.8rem;
-            }
-            .announcement-summary .a-sender {
-                font-size: 0.7rem;
-            }
-            .announcement-summary .a-time {
-                font-size: 0.6rem;
-            }
+            .announcements-sidebar { padding: 12px; }
+            .announcement-summary .a-title { font-size: 0.75rem; }
+            .announcement-summary .a-sender { font-size: 0.65rem; }
+            .announcement-summary .a-time { font-size: 0.55rem; }
 
-            .btn-submit {
-                width: 100%;
-                padding: 10px 20px;
-                font-size: 0.85rem;
-            }
+            .btn-submit { padding: 10px 20px; font-size: 0.85rem; }
 
-            .form-row {
-                grid-template-columns: 1fr;
-                gap: 0;
-            }
+            .modal-container { padding: 24px 20px; }
+            .modal-container h3 { font-size: 1rem; }
+            .modal-btn { padding: 8px 20px; font-size: 0.8rem; min-width: 80px; }
 
-            .modal-container {
-                padding: 20px 16px;
-            }
-            .modal-container h3 {
-                font-size: 1rem;
-            }
-            .modal-btn {
-                padding: 8px 16px;
-                font-size: 0.75rem;
-                min-width: 70px;
-            }
-
-            .loading-content {
-                padding: 24px 24px;
-            }
-            .spinner {
-                width: 32px;
-                height: 32px;
-            }
-            .loading-text {
-                font-size: 0.8rem;
-            }
+            .loading-content { padding: 30px 30px; }
+            .spinner { width: 36px; height: 36px; }
+            .loading-text { font-size: 0.85rem; }
 
             .toast-container {
                 top: 8px;
@@ -1417,223 +1378,24 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 max-width: calc(100% - 16px);
             }
             .toast {
-                font-size: 0.75rem;
-                padding: 10px 14px;
-            }
-
-            .pagination a, .pagination span {
-                min-width: 32px;
-                height: 32px;
-                font-size: 0.7rem;
-                padding: 0 8px;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .sidebar {
-                width: 60px !important;
-            }
-            .sidebar:not(.collapsed) { width: 60px !important; }
-            .sidebar.collapsed { width: 60px !important; }
-            
-            .brand {
-                font-size: 0.7rem !important;
-            }
-            .menu-item {
-                padding: 10px 0 !important;
-                margin: 10px 0 !important;
-            }
-            .menu-item i {
-                font-size: 1.1rem !important;
-            }
-            .logout-item .menu-item i {
-                font-size: 1.1rem !important;
-            }
-            .logout-item {
-                margin-bottom: 16px;
-                padding-top: 12px;
-            }
-
-            .main-content {
-                margin-left: 60px !important;
-            }
-            .sidebar.collapsed ~ .main-content {
-                margin-left: 60px !important;
-            }
-
-            .dashboard-body { padding: 8px; }
-            .top-bar { padding: 8px 10px; gap: 6px; }
-            .profile-pic { width: 28px; height: 28px; }
-            .profile-details .name { font-size: 0.6rem; }
-            .profile-details .reg { font-size: 0.45rem; }
-
-            .summary-row {
-                grid-template-columns: 1fr 1fr;
-                gap: 6px;
-            }
-            .summary-card {
-                padding: 10px 8px;
-            }
-            .summary-card .number {
-                font-size: 1rem;
-            }
-            .summary-card .label {
-                font-size: 0.55rem;
-            }
-            .summary-card .icon {
-                font-size: 1.2rem;
-            }
-
-            .filters-bar {
-                padding: 10px 12px;
-            }
-            .filter-item {
-                min-width: 100%;
-            }
-            .filter-item input, .filter-item select {
-                padding: 6px 10px;
-                font-size: 0.75rem;
-            }
-            .filter-item .filter-btn {
-                font-size: 0.75rem;
-                padding: 6px 12px;
-            }
-
-            .content-area {
-                padding: 12px;
-                border-radius: 10px;
-            }
-            .content-area h4 {
-                font-size: 0.75rem;
-            }
-
-            .announcements-sidebar {
-                padding: 12px;
-            }
-
-            .complaints-table thead th,
-            .complaints-table tbody td {
-                padding: 6px 6px;
-                font-size: 0.6rem;
-            }
-            .btn-sm {
-                font-size: 0.5rem;
-                padding: 2px 8px;
-            }
-
-            .complaint-detail-grid {
-                padding: 10px;
-                gap: 8px;
-            }
-            .complaint-detail-grid .detail-item .label {
-                font-size: 0.55rem;
-            }
-            .complaint-detail-grid .detail-item .value {
-                font-size: 0.75rem;
-            }
-
-            .description-box {
-                padding: 10px;
-            }
-            .description-box .value {
-                font-size: 0.78rem;
-            }
-
-            .conversation {
-                padding: 8px 10px;
-                max-height: 250px;
-            }
-            .message {
-                padding: 8px 12px;
-            }
-            .message-header {
-                font-size: 0.6rem;
-            }
-            .message-body {
-                font-size: 0.75rem;
-            }
-
-            .announcement-summary .a-title {
-                font-size: 0.75rem;
-            }
-            .announcement-summary .a-sender {
-                font-size: 0.65rem;
-            }
-            .announcement-summary .a-time {
-                font-size: 0.55rem;
-            }
-
-            .btn-submit {
-                padding: 8px 16px;
                 font-size: 0.8rem;
-            }
-
-            .modal-container {
-                padding: 16px 14px;
-            }
-            .modal-container h3 {
-                font-size: 0.9rem;
-            }
-            .modal-btn {
-                padding: 6px 14px;
-                font-size: 0.7rem;
-                min-width: 60px;
-            }
-
-            .loading-content {
-                padding: 20px 20px;
-            }
-            .spinner {
-                width: 28px;
-                height: 28px;
-            }
-            .loading-text {
-                font-size: 0.75rem;
-            }
-
-            .toast-container {
-                top: 6px;
-                right: 6px;
-                max-width: calc(100% - 12px);
-            }
-            .toast {
-                font-size: 0.7rem;
-                padding: 8px 12px;
-            }
-            .toast i {
-                font-size: 1rem;
-            }
-
-            .pagination a, .pagination span {
-                min-width: 28px;
-                height: 28px;
-                font-size: 0.6rem;
-                padding: 0 6px;
+                padding: 12px 16px;
             }
         }
 
         @media (max-width: 380px) {
-            .sidebar {
-                width: 55px !important;
-            }
+            .sidebar { width: 55px !important; }
             .sidebar:not(.collapsed) { width: 55px !important; }
             .sidebar.collapsed { width: 55px !important; }
-            .main-content {
-                margin-left: 55px !important;
-            }
-            .sidebar.collapsed ~ .main-content {
-                margin-left: 55px !important;
-            }
-            .menu-item {
-                padding: 8px 0 !important;
-                margin: 8px 0 !important;
-            }
-            .menu-item i {
-                font-size: 1rem !important;
-            }
-            .logout-item .menu-item i {
-                font-size: 1rem !important;
-            }
+            .main-content { margin-left: 55px !important; }
+            .sidebar.collapsed ~ .main-content { margin-left: 55px !important; }
+            .menu-item i { font-size: 0.95rem !important; }
+
+            .summary-row { grid-template-columns: 1fr 1fr; gap: 6px; }
+            .summary-card { padding: 10px 8px; min-height: 60px; gap: 8px; }
+            .summary-card .icon-wrapper { width: 28px; height: 28px; font-size: 0.75rem; }
+            .summary-card .info .number { font-size: 0.95rem; }
+            .summary-card .info .label { font-size: 0.55rem; }
         }
     </style>
 </head>
@@ -1646,39 +1408,39 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <div class="row-cfms">
-            <span class="brand">CFMS <span>| IAASO</span></span>
+            <span class="brand">CFMS <span>| Dean</span></span>
             <button class="toggle-inline" id="toggleInline">❮</button>
         </div>
         <div class="row-tagline">
-            <span class="tagline">IAASO Portal</span>
+            <span class="tagline">Dean of Students</span>
             <button class="toggle-standalone" id="toggleStandalone">❮</button>
         </div>
     </div>
 
     <div class="sidebar-menu">
-        <a href="president_dashboard.php?page=dashboard" class="menu-item <?php echo $active_page == 'dashboard' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=dashboard" class="menu-item <?php echo $active_page == 'dashboard' ? 'active' : ''; ?>">
             <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
         </a>
-        <a href="president_dashboard.php?page=complaints" class="menu-item <?php echo $active_page == 'complaints' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=complaints" class="menu-item <?php echo $active_page == 'complaints' ? 'active' : ''; ?>">
             <i class="fas fa-file-alt"></i><span>All Complaints</span>
         </a>
-        <a href="president_dashboard.php?page=pending" class="menu-item <?php echo $active_page == 'pending' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=pending" class="menu-item <?php echo $active_page == 'pending' ? 'active' : ''; ?>">
             <i class="fas fa-clock"></i><span>Pending</span>
         </a>
-        <a href="president_dashboard.php?page=resolved" class="menu-item <?php echo $active_page == 'resolved' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=resolved" class="menu-item <?php echo $active_page == 'resolved' ? 'active' : ''; ?>">
             <i class="fas fa-check-circle"></i><span>Resolved</span>
         </a>
-        <a href="president_dashboard.php?page=escalated" class="menu-item <?php echo $active_page == 'escalated' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=escalated" class="menu-item <?php echo $active_page == 'escalated' ? 'active' : ''; ?>">
             <i class="fas fa-exclamation-triangle"></i><span>Escalated</span>
         </a>
-        <a href="president_announcements.php" class="menu-item <?php echo $active_page == 'announcements' ? 'active' : ''; ?>">
-            <i class="fas fa-bullhorn"></i><span>Announcements</span>
-        </a>
-        <a href="president_dashboard.php?page=profile" class="menu-item <?php echo $active_page == 'profile' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=profile" class="menu-item <?php echo $active_page == 'profile' ? 'active' : ''; ?>">
             <i class="fas fa-user-circle"></i><span>Profile</span>
         </a>
-        <a href="president_dashboard.php?page=change-password" class="menu-item <?php echo $active_page == 'change-password' ? 'active' : ''; ?>">
+        <a href="dean_dashboard.php?page=change-password" class="menu-item <?php echo $active_page == 'change-password' ? 'active' : ''; ?>">
             <i class="fas fa-key"></i><span>Change Password</span>
+        </a>
+        <a href="announcements.php" class="menu-item">
+            <i class="fas fa-bullhorn"></i><span>Announcements</span>
         </a>
     </div>
     
@@ -1695,111 +1457,80 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
     <div class="top-bar">
         <div>
             <div style="font-size: 0.9rem; font-weight: 600; color: #0a2a5e;">
-                <i class="fas fa-university" style="color: #1a56db;"></i> Welcome, <?php echo htmlspecialchars($president_name); ?>
+                <i class="fas fa-user-graduate" style="color: #1a56db;"></i> Welcome, <?php echo htmlspecialchars($dean_name); ?>
             </div>
-            <div style="font-size: 0.75rem; color: #6b85a0;">IAASO President</div>
+            <div style="font-size: 0.75rem; color: #6b85a0;"><?php echo htmlspecialchars($dept_name); ?></div>
         </div>
         <div class="profile-info">
             <div class="profile-pic">
                 <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
                     <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile">
                 <?php else: ?>
-                    <?php echo strtoupper(substr($president_name, 0, 1)); ?>
+                    <?php echo strtoupper(substr($dean_name, 0, 1)); ?>
                 <?php endif; ?>
             </div>
             <div class="profile-details">
-                <div class="name"><?php echo htmlspecialchars($president_name); ?></div>
-                <div class="reg">President (IAASO)</div>
+                <div class="name"><?php echo htmlspecialchars($dean_name); ?></div>
+                <div class="reg">Dean</div>
             </div>
         </div>
     </div>
 
     <!-- DASHBOARD BODY -->
     <div class="dashboard-body">
-        <?php if ($flash_message): ?>
-            <script>
-                document.addEventListener('DOMContentLoaded', function() {
-                    showToast('<?php echo addslashes($flash_message); ?>', '<?php echo $flash_type; ?>');
-                });
-            </script>
-        <?php endif; ?>
-
         <?php if ($active_page == 'dashboard'): ?>
-            <?php
-            $stats_sql = "SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-                SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
-                SUM(CASE WHEN status = 'escalated' THEN 1 ELSE 0 END) as escalated
-                FROM complaints WHERE assigned_to = ?";
-            $stats_stmt = mysqli_prepare($conn, $stats_sql);
-            mysqli_stmt_bind_param($stats_stmt, "i", $president_id);
-            mysqli_stmt_execute($stats_stmt);
-            $stats_result = mysqli_stmt_get_result($stats_stmt);
-            $stats = mysqli_fetch_assoc($stats_result);
-            mysqli_stmt_close($stats_stmt);
-
-            // Get recent complaints
-            $recent_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, u.full_name 
-                          FROM complaints c 
-                          JOIN users u ON c.student_id = u.id 
-                          WHERE c.assigned_to = ? 
-                          ORDER BY c.created_at DESC LIMIT 5";
-            $recent_stmt = mysqli_prepare($conn, $recent_sql);
-            mysqli_stmt_bind_param($recent_stmt, "i", $president_id);
-            mysqli_stmt_execute($recent_stmt);
-            $recent_result = mysqli_stmt_get_result($recent_stmt);
-            ?>
             <!-- Statistics Cards -->
             <div class="summary-row">
                 <div class="summary-card">
-                    <div class="icon blue"><i class="fas fa-file-alt"></i></div>
-                    <div class="number"><?php echo $stats['total']; ?></div>
-                    <div class="label">Total Complaints</div>
+                    <div class="icon-wrapper blue"><i class="fas fa-file-alt"></i></div>
+                    <div class="info">
+                        <div class="number"><?php echo $stats['total']; ?></div>
+                        <div class="label">Total Complaints</div>
+                    </div>
                 </div>
                 <div class="summary-card">
-                    <div class="icon yellow"><i class="fas fa-clock"></i></div>
-                    <div class="number"><?php echo $stats['pending']; ?></div>
-                    <div class="label">Pending</div>
+                    <div class="icon-wrapper yellow"><i class="fas fa-clock"></i></div>
+                    <div class="info">
+                        <div class="number"><?php echo $stats['pending']; ?></div>
+                        <div class="label">Pending</div>
+                    </div>
                 </div>
                 <div class="summary-card">
-                    <div class="icon purple"><i class="fas fa-spinner"></i></div>
-                    <div class="number"><?php echo $stats['in_progress']; ?></div>
-                    <div class="label">In Progress</div>
+                    <div class="icon-wrapper purple"><i class="fas fa-spinner"></i></div>
+                    <div class="info">
+                        <div class="number"><?php echo $stats['in_progress']; ?></div>
+                        <div class="label">In Progress</div>
+                    </div>
                 </div>
                 <div class="summary-card">
-                    <div class="icon green"><i class="fas fa-check-circle"></i></div>
-                    <div class="number"><?php echo $stats['resolved']; ?></div>
-                    <div class="label">Resolved</div>
+                    <div class="icon-wrapper green"><i class="fas fa-check-circle"></i></div>
+                    <div class="info">
+                        <div class="number"><?php echo $stats['resolved']; ?></div>
+                        <div class="label">Resolved</div>
+                    </div>
                 </div>
                 <div class="summary-card">
-                    <div class="icon red"><i class="fas fa-exclamation-triangle"></i></div>
-                    <div class="number"><?php echo $stats['escalated']; ?></div>
-                    <div class="label">Escalated</div>
+                    <div class="icon-wrapper red"><i class="fas fa-exclamation-triangle"></i></div>
+                    <div class="info">
+                        <div class="number"><?php echo $stats['escalated']; ?></div>
+                        <div class="label">Escalated</div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Dashboard Grid: Recent Complaints & Announcements -->
+            <!-- GRIDI 70% TABLE / 30% ANNOUNCEMENTS -->
             <div class="dashboard-grid">
-                <!-- Recent Complaints -->
+                <!-- 70% - Recent Complaints Table -->
                 <div class="content-area">
-                    <h4><i class="fas fa-clock" style="color:#1a56db;"></i> Recent Complaints</h4>
+                    <h4><i class="fas fa-clock" style="color: #1a56db;"></i> Recent Complaints</h4>
                     <div class="table-responsive">
                         <table class="complaints-table">
                             <thead>
-                                <tr>
-                                    <th>Complaint #</th>
-                                    <th>Student</th>
-                                    <th>Title</th>
-                                    <th>Status</th>
-                                    <th>Date</th>
-                                    <th>Action</th>
-                                </tr>
+                                <tr><th>Complaint #</th><th>Student</th><th>Title</th><th>Status</th><th>Date</th></tr>
                             </thead>
                             <tbody>
                                 <?php if (mysqli_num_rows($recent_result) == 0): ?>
-                                    <tr><td colspan="6"><div class="no-data"><i class="fas fa-inbox"></i> No complaints assigned yet.</div></td></tr>
+                                    <tr><td colspan="5" style="text-align:center; padding:30px; color:#8ba0bc;">No complaints assigned yet.</td></tr>
                                 <?php else: ?>
                                     <?php while ($row = mysqli_fetch_assoc($recent_result)):
                                         $status_class = match($row['status']) {
@@ -1815,25 +1546,23 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                                             <td><?php echo htmlspecialchars($row['full_name']); ?></td>
                                             <td><?php echo htmlspecialchars($row['title']); ?></td>
                                             <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
-                                            <td style="font-size:0.75rem;"><?php echo date('d/m/y', strtotime($row['created_at'])); ?></td>
-                                            <td><a href="president_dashboard.php?page=view-complaint&id=<?php echo $row['id']; ?>" class="btn-sm">View</a></td>
+                                            <td><?php echo date('d/m/y', strtotime($row['created_at'])); ?></td>
                                         </tr>
                                     <?php endwhile; ?>
                                 <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
-                    <?php mysqli_stmt_close($recent_stmt); ?>
-                    <div style="margin-top: 16px; text-align: center;">
-                        <a href="president_dashboard.php?page=complaints" class="btn-sm" style="background: #6b85a0;">View All Complaints <i class="fas fa-arrow-right"></i></a>
+                    <div style="margin-top: 15px; text-align: center;">
+                        <a href="dean_dashboard.php?page=complaints" class="btn-sm" style="background: #6b85a0;">View All Complaints <i class="fas fa-arrow-right"></i></a>
                     </div>
                 </div>
 
-                <!-- Announcements Sidebar -->
+                <!-- 30% - Latest Announcements -->
                 <div class="announcements-sidebar">
                     <h4>
                         <i class="fas fa-bullhorn"></i> Announcements
-                        <a href="president_announcements.php" class="view-all">View All →</a>
+                        <a href="announcements.php" class="view-all">View All →</a>
                     </h4>
                     
                     <?php if (empty($announcements)): ?>
@@ -1869,105 +1598,93 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         <?php elseif ($active_page == 'complaints' || $active_page == 'pending' || $active_page == 'resolved' || $active_page == 'escalated'): ?>
             <?php
             $status_filter = '';
-            if ($active_page == 'pending') $status_filter = "AND status = 'pending'";
-            elseif ($active_page == 'resolved') $status_filter = "AND status = 'resolved'";
-            elseif ($active_page == 'escalated') $status_filter = "AND status = 'escalated'";
-            $where = "assigned_to = ? $status_filter";
-            if ($priority_filter) $where .= " AND priority = ?";
-            if ($search) $where .= " AND (complaint_number LIKE ? OR student_id IN (SELECT id FROM users WHERE full_name LIKE ?))";
+            if ($active_page == 'pending') $status_filter = "AND c.status = 'pending'";
+            elseif ($active_page == 'resolved') $status_filter = "AND c.status = 'resolved'";
+            elseif ($active_page == 'escalated') $status_filter = "AND c.status = 'escalated'";
+            $where = "c.assigned_to = ? AND cat.name IN ($category_in_list) $status_filter";
+            if ($priority_filter) $where .= " AND c.priority = ?";
+            if ($search) $where .= " AND (u.full_name LIKE ? OR c.complaint_number LIKE ?)";
             $order_by = match($sort) {
-                'oldest' => 'created_at ASC',
-                'priority_high' => "FIELD(priority, 'high','medium','low')",
-                'priority_low' => "FIELD(priority, 'low','medium','high')",
-                default => 'created_at DESC',
+                'oldest' => 'c.created_at ASC',
+                'priority_high' => "FIELD(c.priority, 'high','medium','low')",
+                'priority_low' => "FIELD(c.priority, 'low','medium','high')",
+                default => 'c.created_at DESC',
             };
-            // Count total
-            $count_sql = "SELECT COUNT(*) as total FROM complaints WHERE $where";
+            $count_sql = "SELECT COUNT(*) as total FROM complaints c JOIN users u ON c.student_id = u.id JOIN categories cat ON c.category_id = cat.id WHERE $where";
             $count_stmt = mysqli_prepare($conn, $count_sql);
             if ($priority_filter && $search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($count_stmt, "iss", $president_id, $priority_filter, $search_param);
+                mysqli_stmt_bind_param($count_stmt, "iss", $dean_id, $priority_filter, $search_param);
             } elseif ($priority_filter) {
-                mysqli_stmt_bind_param($count_stmt, "is", $president_id, $priority_filter);
+                mysqli_stmt_bind_param($count_stmt, "is", $dean_id, $priority_filter);
             } elseif ($search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($count_stmt, "is", $president_id, $search_param);
+                mysqli_stmt_bind_param($count_stmt, "is", $dean_id, $search_param);
             } else {
-                mysqli_stmt_bind_param($count_stmt, "i", $president_id);
+                mysqli_stmt_bind_param($count_stmt, "i", $dean_id);
             }
             mysqli_stmt_execute($count_stmt);
             $total_rows = mysqli_fetch_assoc(mysqli_stmt_get_result($count_stmt))['total'];
             mysqli_stmt_close($count_stmt);
             $total_pages = ceil($total_rows / $limit);
-            // Fetch data
-            $data_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, u.full_name, c.priority
-                        FROM complaints c
-                        JOIN users u ON c.student_id = u.id
-                        WHERE $where
-                        ORDER BY $order_by
-                        LIMIT ? OFFSET ?";
+            $data_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, c.updated_at, u.full_name, c.priority FROM complaints c JOIN users u ON c.student_id = u.id JOIN categories cat ON c.category_id = cat.id WHERE $where ORDER BY $order_by LIMIT ? OFFSET ?";
             $data_stmt = mysqli_prepare($conn, $data_sql);
             if ($priority_filter && $search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($data_stmt, "issii", $president_id, $priority_filter, $search_param, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "issii", $dean_id, $priority_filter, $search_param, $limit, $offset);
             } elseif ($priority_filter) {
-                mysqli_stmt_bind_param($data_stmt, "isii", $president_id, $priority_filter, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "isii", $dean_id, $priority_filter, $limit, $offset);
             } elseif ($search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($data_stmt, "isii", $president_id, $search_param, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "isii", $dean_id, $search_param, $limit, $offset);
             } else {
-                mysqli_stmt_bind_param($data_stmt, "iii", $president_id, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "iii", $dean_id, $limit, $offset);
             }
             mysqli_stmt_execute($data_stmt);
             $data_result = mysqli_stmt_get_result($data_stmt);
             ?>
             <div class="content-area">
-                <h4><i class="fas fa-file-alt" style="color:#1a56db;"></i> <?php echo ucfirst(str_replace('-', ' ', $active_page)); ?> Complaints</h4>
+                <h4><?php echo ucfirst(str_replace('-', ' ', $active_page)); ?> Complaints</h4>
                 
+                <!-- Filters -->
                 <form method="GET" class="filters-bar">
                     <input type="hidden" name="page" value="<?php echo $active_page; ?>">
-                    <div class="filters-row">
-                        <div class="filter-item">
-                            <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search Student / Complaint #">
-                        </div>
-                        <div class="filter-item">
-                            <select name="priority">
-                                <option value="">All Priority</option>
-                                <option value="high" <?php echo $priority_filter=='high'?'selected':''; ?>>High</option>
-                                <option value="medium" <?php echo $priority_filter=='medium'?'selected':''; ?>>Medium</option>
-                                <option value="low" <?php echo $priority_filter=='low'?'selected':''; ?>>Low</option>
-                            </select>
-                        </div>
-                        <div class="filter-item">
-                            <select name="sort">
-                                <option value="newest" <?php echo $sort=='newest'?'selected':''; ?>>Newest first</option>
-                                <option value="oldest" <?php echo $sort=='oldest'?'selected':''; ?>>Oldest first</option>
-                                <option value="priority_high" <?php echo $sort=='priority_high'?'selected':''; ?>>Priority (High to Low)</option>
-                                <option value="priority_low" <?php echo $sort=='priority_low'?'selected':''; ?>>Priority (Low to High)</option>
-                            </select>
-                        </div>
-                        <div class="filter-item" style="flex: 0 0 auto; min-width: auto;">
-                            <button type="submit" class="filter-btn"><i class="fas fa-search"></i> Filter</button>
-                        </div>
+                    <div class="filter-group">
+                        <label>Search</label>
+                        <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Student / Complaint #">
+                    </div>
+                    <div class="filter-group">
+                        <label>Priority</label>
+                        <select name="priority">
+                            <option value="">All</option>
+                            <option value="high" <?php echo $priority_filter=='high'?'selected':''; ?>>High</option>
+                            <option value="medium" <?php echo $priority_filter=='medium'?'selected':''; ?>>Medium</option>
+                            <option value="low" <?php echo $priority_filter=='low'?'selected':''; ?>>Low</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Sort by</label>
+                        <select name="sort">
+                            <option value="newest" <?php echo $sort=='newest'?'selected':''; ?>>Newest first</option>
+                            <option value="oldest" <?php echo $sort=='oldest'?'selected':''; ?>>Oldest first</option>
+                            <option value="priority_high" <?php echo $sort=='priority_high'?'selected':''; ?>>Priority (High to Low)</option>
+                            <option value="priority_low" <?php echo $sort=='priority_low'?'selected':''; ?>>Priority (Low to High)</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <button type="submit" class="filter-btn"><i class="fas fa-filter"></i> Apply</button>
                     </div>
                 </form>
 
+                <!-- Table -->
                 <div class="table-responsive">
                     <table class="complaints-table">
                         <thead>
-                            <tr>
-                                <th>Complaint #</th>
-                                <th>Student</th>
-                                <th>Title</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Date</th>
-                                <th>Action</th>
-                            </tr>
+                            <tr><th>Complaint #</th><th>Student</th><th>Title</th><th>Priority</th><th>Status</th><th>Date</th><th>Action</th></tr>
                         </thead>
                         <tbody>
                             <?php if (mysqli_num_rows($data_result) == 0): ?>
-                                <tr><td colspan="7"><div class="no-data"><i class="fas fa-inbox"></i> No complaints found.</div></td></tr>
+                                <tr><td colspan="7" style="text-align:center; padding:30px; color:#8ba0bc;">No complaints found.</td></tr>
                             <?php else: ?>
                                 <?php while ($row = mysqli_fetch_assoc($data_result)):
                                     $status_class = match($row['status']) {
@@ -1978,95 +1695,58 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                                         default => ''
                                     };
                                 ?>
-                                <tr>
-                                    <td><strong><?php echo $row['complaint_number']; ?></strong></td>
-                                    <td><?php echo htmlspecialchars($row['full_name']); ?></td>
-                                    <td><?php echo htmlspecialchars($row['title']); ?></td>
-                                    <td><?php echo ucfirst($row['priority']); ?></td>
-                                    <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
-                                    <td style="font-size:0.75rem;"><?php echo date('d/m/Y', strtotime($row['created_at'])); ?></td>
-                                    <td><a href="president_dashboard.php?page=view-complaint&id=<?php echo $row['id']; ?>" class="btn-sm">View</a></td>
-                                </tr>
+                                    <tr>
+                                        <td><strong><?php echo $row['complaint_number']; ?></strong></td>
+                                        <td><?php echo htmlspecialchars($row['full_name']); ?></td>
+                                        <td><?php echo htmlspecialchars($row['title']); ?></td>
+                                        <td><?php echo ucfirst($row['priority']); ?></td>
+                                        <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
+                                        <td><?php echo date('d/m/Y', strtotime($row['created_at'])); ?></td>
+                                        <td><a href="dean_dashboard.php?page=view-complaint&id=<?php echo $row['id']; ?>" class="btn-sm">View</a></td>
+                                    </tr>
                                 <?php endwhile; ?>
                             <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
 
+                <!-- Pagination -->
                 <?php if ($total_pages > 1): ?>
                 <div class="pagination">
                     <?php if ($page > 1): ?>
-                        <a href="president_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page-1; ?>"><i class="fas fa-chevron-left"></i></a>
+                        <a href="dean_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page-1; ?>"><i class="fas fa-chevron-left"></i></a>
                     <?php endif; ?>
                     <?php for ($i = 1; $i <= $total_pages; $i++): ?>
                         <?php if ($i == $page): ?>
                             <span class="current"><?php echo $i; ?></span>
                         <?php else: ?>
-                            <a href="president_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $i; ?>"><?php echo $i; ?></a>
+                            <a href="dean_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $i; ?>"><?php echo $i; ?></a>
                         <?php endif; ?>
                     <?php endfor; ?>
                     <?php if ($page < $total_pages): ?>
-                        <a href="president_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page+1; ?>"><i class="fas fa-chevron-right"></i></a>
+                        <a href="dean_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page+1; ?>"><i class="fas fa-chevron-right"></i></a>
                     <?php endif; ?>
                 </div>
                 <?php endif; ?>
-                <?php mysqli_stmt_close($data_stmt); ?>
             </div>
 
         <?php elseif ($active_page == 'view-complaint' && $complaint_id): ?>
             <?php
-            $detail_sql = "SELECT c.*, u.full_name as student_name, u.reg_number FROM complaints c JOIN users u ON c.student_id = u.id WHERE c.id = ? AND c.assigned_to = ?";
+            $detail_sql = "SELECT c.*, u.full_name as student_name, u.reg_number, u.email as student_email 
+                          FROM complaints c 
+                          JOIN users u ON c.student_id = u.id 
+                          JOIN categories cat ON c.category_id = cat.id
+                          WHERE c.id = ? AND c.assigned_to = ? AND cat.name IN ($category_in_list)";
             $detail_stmt = mysqli_prepare($conn, $detail_sql);
-            mysqli_stmt_bind_param($detail_stmt, "ii", $complaint_id, $president_id);
+            mysqli_stmt_bind_param($detail_stmt, "ii", $complaint_id, $dean_id);
             mysqli_stmt_execute($detail_stmt);
             $detail_result = mysqli_stmt_get_result($detail_stmt);
             $complaint = mysqli_fetch_assoc($detail_result);
             mysqli_stmt_close($detail_stmt);
-            
-            if (!$complaint) { 
+            if (!$complaint) {
                 echo '<div class="content-area"><p style="color:#991b1b;">Complaint not found or not assigned to you.</p></div>';
             } else {
                 $is_escalated = ($complaint['status'] === 'escalated');
-                $is_resolved = ($complaint['status'] === 'resolved');
-                
-                $created = new DateTime($complaint['created_at']);
-                $now = new DateTime();
-                $elapsed = $created->diff($now);
-                $elapsedFormatted = $elapsed->format('%a days, %h hours, %i minutes');
-                
-                $slaHours = 120;
-                switch(strtolower($complaint['priority'])) {
-                    case 'high': $slaHours = 48; break;
-                    case 'medium': $slaHours = 120; break;
-                    case 'low': $slaHours = 168; break;
-                }
-                $deadline = clone $created;
-                $deadline->modify("+{$slaHours} hours");
-                $deadlineTimestamp = $deadline->getTimestamp();
-                $nowTimestamp = $now->getTimestamp();
-                $remainingSeconds = $deadlineTimestamp - $nowTimestamp;
-                
-                $resolutionFormatted = null;
-                if ($is_resolved && !empty($complaint['updated_at'])) {
-                    $resolvedTime = new DateTime($complaint['updated_at']);
-                    $resolutionDuration = $created->diff($resolvedTime);
-                    $resolutionFormatted = $resolutionDuration->format('%a days, %h hours, %i minutes');
-                }
-                
-                $slaStatus = '';
-                $overdueFormatted = '';
-                if ($is_resolved) {
-                    $slaStatus = 'resolved';
-                } else {
-                    if ($remainingSeconds < 0) {
-                        $slaStatus = 'overdue';
-                        $overdueInterval = $deadline->diff($now);
-                        $overdueFormatted = $overdueInterval->format('%a days, %h hours, %i minutes');
-                    } else {
-                        $slaStatus = 'active';
-                    }
-                }
-                
                 $resp_sql = "SELECT r.*, u.full_name, u.role FROM responses r JOIN users u ON r.user_id = u.id WHERE r.complaint_id = ? ORDER BY r.created_at ASC";
                 $resp_stmt = mysqli_prepare($conn, $resp_sql);
                 mysqli_stmt_bind_param($resp_stmt, "i", $complaint_id);
@@ -2074,84 +1754,38 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 $resp_result = mysqli_stmt_get_result($resp_stmt);
                 ?>
                 <div class="content-area">
-                    <!-- Back Button -->
-                    <div style="margin-bottom: 16px;">
-                        <a href="javascript:history.back()" class="btn-sm" style="background:#6b85a0;">
-                            <i class="fas fa-arrow-left"></i> Back
-                        </a>
-                    </div>
-
                     <?php if ($is_escalated): ?>
-                        <div style="background:#fff3cd; padding:12px 16px; border-radius:12px; margin-bottom:16px; border-left:4px solid #ffc107; color:#856404;">
+                        <div style="background:#fef3c7; color:#856404; border-left:4px solid #f59e0b; padding:12px 16px; border-radius:12px; margin-bottom:20px; display:flex; align-items:center; gap:10px;">
                             <i class="fas fa-lock"></i> This complaint has been escalated and is now <strong>read‑only</strong>.
                         </div>
                     <?php endif; ?>
                     
-                    <div class="sla-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e9effa 100%); border-radius:16px; padding:20px 24px; margin-bottom:20px; border-left:4px solid #1a56db; border:1px solid #dbeafe;">
-                        <div style="font-weight:700; font-size:1rem; margin-bottom:14px; display:flex; align-items:center; gap:8px; color:#0a2a5e;">
-                            <i class="fas fa-hourglass-half"></i> SLA Monitoring
-                        </div>
-                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:16px;">
-                            <div>
-                                <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="far fa-clock"></i> Time since submission</div>
-                                <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><?php echo $elapsedFormatted; ?></div>
-                            </div>
-                            <?php if ($is_resolved && $resolutionFormatted): ?>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-check-circle"></i> Total resolution time</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><span style="color:#065f46; background:#d1fae5; border-radius:30px; padding:4px 14px; display:inline-block; font-weight:600;"><?php echo $resolutionFormatted; ?></span></div>
-                                </div>
-                            <?php else: ?>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-tachometer-alt"></i> SLA target (<?php echo ucfirst($complaint['priority']); ?> priority)</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><?php echo $slaHours; ?> hours (<?php echo round($slaHours/24,1); ?> days)</div>
-                                </div>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-calendar-alt"></i> Deadline</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><?php echo $deadline->format('d/m/Y H:i'); ?></div>
-                                </div>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-hourglass-end"></i> Remaining / Status</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;">
-                                        <?php if ($slaStatus === 'active'): ?>
-                                            <span id="countdownTimer" style="font-family:monospace; font-size:1.1rem; font-weight:700; background:#ffffffcc; display:inline-block; padding:4px 14px; border-radius:30px; border:1px solid #dbeafe;" data-deadline="<?php echo $deadlineTimestamp * 1000; ?>">-- : -- : --</span>
-                                        <?php elseif ($slaStatus === 'overdue'): ?>
-                                            <span style="color:#991b1b; background:#fee2e2; border-radius:30px; padding:4px 14px; display:inline-block; font-weight:600;"><i class="fas fa-exclamation-triangle"></i> Overdue by <?php echo $overdueFormatted; ?></span>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                            <?php endif; ?>
-                        </div>
-                    </div>
+                    <h4 style="color:#0a2a5e; margin-bottom:16px;">Complaint #<?php echo htmlspecialchars($complaint['complaint_number']); ?></h4>
                     
-                    <h4 style="color:#0a2a5e; margin-bottom:16px; font-size:1rem;">
-                        <i class="fas fa-file-alt" style="color:#1a56db;"></i> 
-                        Complaint #<?php echo htmlspecialchars($complaint['complaint_number']); ?>
-                    </h4>
-                    
+                    <!-- Complaint Details -->
                     <div class="complaint-detail-grid">
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-user"></i> Student</span>
+                            <span class="label">Student</span>
                             <span class="value"><?php echo htmlspecialchars($complaint['student_name']); ?> (<?php echo $complaint['reg_number']; ?>)</span>
                         </div>
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-tag"></i> Title</span>
+                            <span class="label">Title</span>
                             <span class="value"><?php echo htmlspecialchars($complaint['title']); ?></span>
                         </div>
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-map-marker-alt"></i> Location</span>
+                            <span class="label">Location</span>
                             <span class="value"><?php echo htmlspecialchars($complaint['location'] ?: 'Not provided'); ?></span>
                         </div>
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-calendar-day"></i> Incident Date</span>
+                            <span class="label">Incident Date</span>
                             <span class="value"><?php echo date('d/m/Y', strtotime($complaint['incident_date'])); ?></span>
                         </div>
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-flag"></i> Priority</span>
+                            <span class="label">Priority</span>
                             <span class="value"><?php echo ucfirst($complaint['priority']); ?></span>
                         </div>
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-circle"></i> Status</span>
+                            <span class="label">Status</span>
                             <span class="value">
                                 <span class="badge <?php 
                                     if ($complaint['status']=='pending') echo 'badge-pending';
@@ -2163,26 +1797,22 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                         </div>
                         <?php if ($complaint['attachment_path']): ?>
                         <div class="detail-item">
-                            <span class="label"><i class="fas fa-paperclip"></i> Evidence</span>
-                            <span class="value"><a href="../<?php echo $complaint['attachment_path']; ?>" target="_blank" class="btn-sm" style="background:#10b981; font-size:0.7rem;">Download</a></span>
+                            <span class="label">Evidence</span>
+                            <span class="value"><a href="../<?php echo $complaint['attachment_path']; ?>" target="_blank" class="btn-sm" style="background:#10b981;">Download</a></span>
                         </div>
                         <?php endif; ?>
                     </div>
                     
+                    <!-- Description -->
                     <div class="description-box">
-                        <div class="label"><i class="fas fa-align-left"></i> Description</div>
+                        <div class="label">Description</div>
                         <div class="value"><?php echo nl2br(htmlspecialchars($complaint['description'])); ?></div>
                     </div>
                     
-                    <h5 style="font-size:0.95rem; font-weight:700; color:#0a2a5e; margin-bottom:12px;">
-                        <i class="fas fa-comments" style="color:#1a56db;"></i> Conversation
-                    </h5>
+                    <!-- Conversation -->
+                    <h5 style="font-size:0.95rem; font-weight:700; color:#0a2a5e; margin-bottom:12px;"><i class="fas fa-comments" style="color:#1a56db;"></i> Conversation</h5>
                     <div class="conversation">
-                        <?php 
-                        $has_messages = false;
-                        while ($resp = mysqli_fetch_assoc($resp_result)): 
-                            $has_messages = true;
-                        ?>
+                        <?php while ($resp = mysqli_fetch_assoc($resp_result)): ?>
                             <div class="message <?php echo ($resp['role'] == 'student') ? 'student-message' : 'staff-message'; ?>">
                                 <div class="message-header">
                                     <span class="sender">
@@ -2194,19 +1824,20 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                                 <div class="message-body"><?php echo nl2br(htmlspecialchars($resp['message'])); ?></div>
                             </div>
                         <?php endwhile; mysqli_stmt_close($resp_stmt); ?>
-                        <?php if (!$has_messages): ?>
+                        <?php if (mysqli_num_rows($resp_result) == 0): ?>
                             <p style="color:#8ba0bc; text-align:center; padding:20px 0;">No messages yet.</p>
                         <?php endif; ?>
                     </div>
                     
                     <?php if (!$is_escalated): ?>
+                        <!-- Reply Section -->
                         <div class="reply-section">
                             <h5><i class="fas fa-reply" style="color:#1a56db;"></i> Reply to Student</h5>
                             <form method="POST">
                                 <input type="hidden" name="complaint_id" value="<?php echo $complaint_id; ?>">
                                 <div class="form-group">
                                     <label>Your Message</label>
-                                    <textarea name="message" rows="4" required placeholder="Write your response..."></textarea>
+                                    <textarea name="message" rows="4" required></textarea>
                                 </div>
                                 <div class="form-group">
                                     <label>Update Status</label>
@@ -2220,6 +1851,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                             </form>
                         </div>
                         
+                        <!-- Status Only Section -->
                         <div class="status-section">
                             <h5><i class="fas fa-edit" style="color:#1a56db;"></i> Change Status Only</h5>
                             <form method="POST">
@@ -2237,10 +1869,8 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                             </form>
                         </div>
                     <?php else: ?>
-                        <div class="readonly-notice">
-                            <i class="fas fa-eye"></i>
-                            <strong>Read-Only Mode</strong>
-                            <p style="margin-top:4px; font-size:0.85rem;">This complaint has been escalated and is now read-only. You cannot reply or change the status.</p>
+                        <div style="background:#e9ecef; color:#495057; border-left:4px solid #6c757d; padding:12px 16px; border-radius:12px; margin-top:20px; display:flex; align-items:center; gap:10px;">
+                            <i class="fas fa-eye"></i> This complaint is read‑only because it has been escalated.
                         </div>
                     <?php endif; ?>
                 </div>
@@ -2249,45 +1879,27 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         <?php elseif ($active_page == 'profile'): ?>
             <div class="content-area">
                 <h4><i class="fas fa-user-circle" style="color:#1a56db;"></i> Edit Profile</h4>
-                
-                <div style="display:flex; align-items:center; gap:20px; padding:16px 20px; background:#f8fafc; border-radius:16px; margin-bottom:24px; border:1px solid #e5edf5; flex-wrap:wrap;">
-                    <div style="width:64px; height:64px; border-radius:50%; background:linear-gradient(135deg, #0a2a5e, #003d7a); display:flex; align-items:center; justify-content:center; color:white; font-size:1.5rem; font-weight:700; overflow:hidden; flex-shrink:0;">
-                        <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
-                            <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile" style="width:100%; height:100%; object-fit:cover;">
-                        <?php else: ?>
-                            <?php echo strtoupper(substr($president_name, 0, 1)); ?>
-                        <?php endif; ?>
-                    </div>
-                    <div style="flex:1;">
-                        <h5 style="font-size:1rem; color:#0a2a5e;"><?php echo htmlspecialchars($president_name); ?></h5>
-                        <p style="color:#6b85a0; font-size:0.85rem;"><i class="fas fa-envelope" style="color:#1a56db; width:18px;"></i> <?php echo htmlspecialchars($president_email); ?></p>
-                        <p style="color:#6b85a0; font-size:0.85rem;"><i class="fas fa-phone" style="color:#1a56db; width:18px;"></i> <?php echo !empty($phone) ? htmlspecialchars($phone) : 'Not provided'; ?></p>
-                    </div>
-                </div>
-
                 <form method="POST" enctype="multipart/form-data">
                     <input type="hidden" name="update_profile" value="1">
                     <div class="form-group">
-                        <label>Full Name <span class="required">*</span></label>
-                        <input type="text" name="full_name" value="<?php echo htmlspecialchars($president_name); ?>" required>
+                        <label>Full Name</label>
+                        <input type="text" name="full_name" value="<?php echo htmlspecialchars($dean_name); ?>" required>
                     </div>
                     <div class="form-group">
-                        <label>Email Address</label>
-                        <input type="email" value="<?php echo htmlspecialchars($president_email); ?>" disabled>
-                        <div class="helper-text">Email cannot be changed. Contact system administrator if needed.</div>
+                        <label>Email (cannot be changed)</label>
+                        <input type="email" value="<?php echo htmlspecialchars($dean_email); ?>" disabled style="background:#f0f4f9; cursor:not-allowed;">
                     </div>
                     <div class="form-group">
                         <label>Phone Number</label>
-                        <input type="tel" name="phone" value="<?php echo htmlspecialchars($phone); ?>" placeholder="Enter your phone number">
-                        <div class="helper-text">Maximum 10 digits (e.g., 0712345678)</div>
+                        <input type="tel" name="phone" value="<?php echo htmlspecialchars($phone); ?>">
                     </div>
                     <div class="form-group">
                         <label>Profile Picture</label>
                         <input type="file" name="profile_picture" accept="image/jpeg,image/png,image/jpg,image/gif">
-                        <div class="helper-text">Allowed: JPG, PNG, GIF (Max 2MB)</div>
+                        <div style="font-size:0.8rem; color:#8ba0bc; margin-top:4px;">Allowed: JPG, PNG, GIF (Max 2MB)</div>
                         <?php if (!empty($profile_pic)): ?>
-                            <div style="margin-top:8px; font-size:0.82rem; color:#6b85a0;">
-                                <i class="fas fa-image" style="color:#1a56db;"></i> Current: <?php echo basename($profile_pic); ?>
+                            <div style="margin-top:8px; font-size:0.85rem; color:#6b85a0;">
+                                <i class="fas fa-image"></i> Current: <?php echo basename($profile_pic); ?>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -2298,27 +1910,20 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         <?php elseif ($active_page == 'change-password'): ?>
             <div class="content-area">
                 <h4><i class="fas fa-key" style="color:#1a56db;"></i> Change Password</h4>
-
-                <div style="background:#fef3c7; padding:12px 16px; border-radius:12px; margin-bottom:20px; border-left:4px solid #f59e0b;">
-                    <p style="color:#92400e; font-size:0.85rem; margin:0;">
-                        <i class="fas fa-exclamation-triangle"></i> Password must be at least 6 characters.
-                    </p>
-                </div>
-
                 <form method="POST">
                     <input type="hidden" name="change_password" value="1">
                     <div class="form-group">
-                        <label>Current Password <span class="required">*</span></label>
-                        <input type="password" name="current_password" required placeholder="Enter your current password">
+                        <label>Current Password</label>
+                        <input type="password" name="current_password" required placeholder="Enter current password">
                     </div>
                     <div class="form-group">
-                        <label>New Password <span class="required">*</span></label>
-                        <input type="password" name="new_password" required placeholder="Enter new password (min 6 characters)">
-                        <div class="helper-text">Password must be at least 6 characters.</div>
+                        <label>New Password</label>
+                        <input type="password" name="new_password" required placeholder="Enter new password">
+                        <div style="font-size:0.8rem; color:#8ba0bc; margin-top:4px;">Password must be at least 6 characters</div>
                     </div>
                     <div class="form-group">
-                        <label>Confirm New Password <span class="required">*</span></label>
-                        <input type="password" name="confirm_password" required placeholder="Confirm your new password">
+                        <label>Confirm New Password</label>
+                        <input type="password" name="confirm_password" required placeholder="Confirm new password">
                     </div>
                     <button type="submit" class="btn-submit"><i class="fas fa-save"></i> Change Password</button>
                 </form>
@@ -2389,11 +1994,22 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         }, duration);
     }
 
+    function showToastSuccess(message) {
+        showToast(message, 'success');
+    }
+    function showToastError(message) {
+        showToast(message, 'error');
+    }
+    function showToastInfo(message) {
+        showToast(message, 'info');
+    }
+
+    // ---------- DISPLAY FLASH MESSAGE FROM PHP ----------
     <?php if (!empty($flash_message)): ?>
         <?php if ($flash_type === 'success'): ?>
-            showToast('<?php echo addslashes($flash_message); ?>', 'success');
+            showToastSuccess('<?php echo addslashes($flash_message); ?>');
         <?php else: ?>
-            showToast('<?php echo addslashes($flash_message); ?>', 'error');
+            showToastError('<?php echo addslashes($flash_message); ?>');
         <?php endif; ?>
     <?php endif; ?>
 
@@ -2496,29 +2112,22 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         if (e.target === modal) modal.classList.remove('active');
     });
 
-    // ---------- COUNTDOWN TIMER ----------
-    const countdownElement = document.getElementById('countdownTimer');
-    if (countdownElement && countdownElement.dataset.deadline) {
-        const deadlineMs = parseInt(countdownElement.dataset.deadline);
-        function updateCountdown() {
-            const nowMs = new Date().getTime();
-            const distance = deadlineMs - nowMs;
-            if (distance < 0) {
-                countdownElement.innerHTML = '<span style="color:#991b1b; background:#fee2e2; border-radius:30px; padding:4px 14px; display:inline-block; font-weight:600;">⏰ SLA Expired</span>';
-                return;
-            }
-            const days = Math.floor(distance / (1000 * 60 * 60 * 24));
-            const hours = Math.floor((distance % (86400000)) / (3600000));
-            const minutes = Math.floor((distance % 3600000) / 60000);
-            const seconds = Math.floor((distance % 60000) / 1000);
-            let display = "";
-            if (days > 0) display += days + "d ";
-            display += hours.toString().padStart(2,'0') + ":" + minutes.toString().padStart(2,'0') + ":" + seconds.toString().padStart(2,'0');
-            countdownElement.innerHTML = display;
-        }
-        updateCountdown();
-        setInterval(updateCountdown, 1000);
-    }
+    // ---------- PROFILE & PASSWORD FORM SUBMISSIONS ----------
+    document.querySelectorAll('form[action*="update_profile"]').forEach(form => {
+        form.addEventListener('submit', function() {
+            const btn = this.querySelector('.btn-submit');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+        });
+    });
+
+    document.querySelectorAll('form[action*="change_password"]').forEach(form => {
+        form.addEventListener('submit', function() {
+            const btn = this.querySelector('.btn-submit');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Changing...';
+        });
+    });
 </script>
 </body>
 </html>

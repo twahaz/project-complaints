@@ -4,63 +4,118 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'student') {
     header("Location: ../index.php");
     exit();
 }
+
 require_once '../includes/connection.php';
 
 $student_id = $_SESSION['user_id'];
-$full_name = $_SESSION['full_name'];
+$student_name = $_SESSION['full_name'];
+$student_email = $_SESSION['email'];
 $reg_number = $_SESSION['reg_number'];
 
-// 1) Fetch resolved complaints that have NO rating yet (pending feedback)
-$pending_sql = "SELECT c.id, c.complaint_number, c.title, c.resolved_at
-                FROM complaints c
-                LEFT JOIN ratings r ON c.id = r.complaint_id
-                WHERE c.student_id = ? AND c.status = 'resolved' AND r.id IS NULL
-                ORDER BY c.resolved_at DESC";
-$pending_stmt = mysqli_prepare($conn, $pending_sql);
-mysqli_stmt_bind_param($pending_stmt, "i", $student_id);
-mysqli_stmt_execute($pending_stmt);
-$pending_result = mysqli_stmt_get_result($pending_stmt);
-$pending_feedbacks = [];
-while ($row = mysqli_fetch_assoc($pending_result)) {
-    $pending_feedbacks[] = $row;
+// ========== HANDLE PROFILE UPDATE ==========
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
+    $new_full_name = trim($_POST['full_name'] ?? '');
+    $new_email = trim($_POST['email'] ?? '');
+    $new_phone = trim($_POST['phone'] ?? '');
+    $errors = [];
+    
+    if (empty($new_full_name)) {
+        $errors[] = "Full name is required.";
+    }
+    
+    if (empty($new_email) || !filter_var($new_email, FILTER_VALIDATE_EMAIL)) {
+        $errors[] = "Valid email address is required.";
+    }
+    
+    $new_profile_picture = $_SESSION['profile_picture'] ?? '';
+    
+    // Handle profile picture upload
+    if (isset($_FILES['profile_picture']) && $_FILES['profile_picture']['error'] === UPLOAD_ERR_OK) {
+        $file = $_FILES['profile_picture'];
+        $allowed_types = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif'];
+        $max_size = 2 * 1024 * 1024; // 2MB
+        
+        if (!in_array($file['type'], $allowed_types)) {
+            $errors[] = "Only JPG, PNG, GIF images are allowed.";
+        } elseif ($file['size'] > $max_size) {
+            $errors[] = "Image size must be less than 2MB.";
+        } else {
+            $upload_dir = '../uploads/profiles/';
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0755, true);
+            }
+            
+            $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
+            $new_filename = 'student_' . $student_id . '_' . time() . '.' . $extension;
+            $destination = $upload_dir . $new_filename;
+            
+            if (move_uploaded_file($file['tmp_name'], $destination)) {
+                $new_profile_picture = 'uploads/profiles/' . $new_filename;
+                // Delete old profile picture if exists
+                if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])) {
+                    unlink('../' . $_SESSION['profile_picture']);
+                }
+            } else {
+                $errors[] = "Failed to upload image.";
+            }
+        }
+    }
+    
+    if (empty($errors)) {
+        $update_sql = "UPDATE users SET full_name = ?, email = ?, phone_number = ?, profile_picture = ? WHERE id = ?";
+        $update_stmt = mysqli_prepare($conn, $update_sql);
+        if ($update_stmt) {
+            mysqli_stmt_bind_param($update_stmt, "ssssi", $new_full_name, $new_email, $new_phone, $new_profile_picture, $student_id);
+            mysqli_stmt_execute($update_stmt);
+            mysqli_stmt_close($update_stmt);
+        }
+        
+        // Update session
+        $_SESSION['full_name'] = $new_full_name;
+        $_SESSION['email'] = $new_email;
+        $_SESSION['profile_picture'] = $new_profile_picture;
+        
+        $_SESSION['flash_message'] = "Profile updated successfully!";
+        $_SESSION['flash_type'] = "success";
+        header("Location: profile.php");
+        exit();
+    } else {
+        $_SESSION['flash_message'] = implode("<br>", $errors);
+        $_SESSION['flash_type'] = "error";
+        header("Location: profile.php");
+        exit();
+    }
 }
-mysqli_stmt_close($pending_stmt);
 
-// 2) Fetch all ratings already given
-$sql = "SELECT c.complaint_number, c.title, r.rating_score, r.feedback, r.created_at
-        FROM ratings r
-        JOIN complaints c ON r.complaint_id = c.id
-        WHERE c.student_id = ?
-        ORDER BY r.created_at DESC";
-$stmt = mysqli_prepare($conn, $sql);
-mysqli_stmt_bind_param($stmt, "i", $student_id);
-mysqli_stmt_execute($stmt);
-$result = mysqli_stmt_get_result($stmt);
-$feedbacks = [];
-while ($row = mysqli_fetch_assoc($result)) {
-    $feedbacks[] = $row;
+$flash_message = '';
+$flash_type = '';
+if (isset($_SESSION['flash_message'])) {
+    $flash_message = $_SESSION['flash_message'];
+    $flash_type = $_SESSION['flash_type'];
+    unset($_SESSION['flash_message']);
+    unset($_SESSION['flash_type']);
 }
-mysqli_stmt_close($stmt);
+
+// ========== GET PROFILE DATA ==========
+$prof_sql = "SELECT phone_number, profile_picture FROM users WHERE id = ?";
+$prof_stmt = mysqli_prepare($conn, $prof_sql);
+mysqli_stmt_bind_param($prof_stmt, "i", $student_id);
+mysqli_stmt_execute($prof_stmt);
+$prof_result = mysqli_stmt_get_result($prof_stmt);
+$prof_data = mysqli_fetch_assoc($prof_result);
+$phone = $prof_data['phone_number'] ?? '';
+$profile_pic = $prof_data['profile_picture'] ?? '';
+
+if (!isset($_SESSION['profile_picture']) && $profile_pic) $_SESSION['profile_picture'] = $profile_pic;
+mysqli_stmt_close($prof_stmt);
 mysqli_close($conn);
-
-// Helper function to get rating text
-function getRatingText($score) {
-    return match($score) {
-        5 => 'Excellent',
-        4 => 'Good',
-        3 => 'Average',
-        2 => 'Below Average',
-        1 => 'Poor',
-        default => ''
-    };
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>My Feedback - IAA CFMS</title>
+    <title>Profile - IAA CFMS</title>
     <link rel="icon" type="image/png" href="../images/logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -77,6 +132,79 @@ function getRatingText($score) {
             display: flex;
             height: 100vh;
             overflow: hidden;
+        }
+
+        /* ========== TOAST NOTIFICATIONS ========== */
+        .toast-container {
+            position: fixed;
+            top: 24px;
+            right: 24px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 380px;
+            width: 100%;
+            pointer-events: none;
+        }
+
+        .toast {
+            padding: 16px 20px;
+            border-radius: 14px;
+            font-weight: 500;
+            font-size: 0.9rem;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: toastSlideIn 0.4s ease-out;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .toast.hide { animation: toastSlideOut 0.4s ease-in forwards; }
+        .toast-success { border-left: 4px solid #10b981; }
+        .toast-success i { color: #10b981; }
+        .toast-error { border-left: 4px solid #dc2626; }
+        .toast-error i { color: #dc2626; }
+        .toast-info { border-left: 4px solid #1a56db; }
+        .toast-info i { color: #1a56db; }
+
+        .toast i { font-size: 1.3rem; flex-shrink: 0; }
+        .toast .toast-message { flex: 1; color: #1f2c40; }
+        .toast .toast-close {
+            background: none; border: none; color: #8ba0bc;
+            cursor: pointer; font-size: 1rem; padding: 4px;
+            transition: color 0.2s; flex-shrink: 0;
+        }
+        .toast .toast-close:hover { color: #dc2626; }
+
+        @keyframes toastSlideIn {
+            from { opacity: 0; transform: translateX(40px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes toastSlideOut {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(40px); }
+        }
+
+        .toast .toast-progress {
+            position: absolute; bottom: 0; left: 0; height: 3px;
+            border-radius: 0 0 14px 14px;
+            background: rgba(0, 0, 0, 0.1);
+            animation: toastProgress 3.5s linear forwards;
+        }
+        .toast-success .toast-progress { background: #10b981; }
+        .toast-error .toast-progress { background: #dc2626; }
+        .toast-info .toast-progress { background: #1a56db; }
+
+        @keyframes toastProgress {
+            from { width: 100%; }
+            to { width: 0%; }
         }
 
         /* ========== SIDEBAR ========== */
@@ -143,7 +271,7 @@ function getRatingText($score) {
         .sidebar.collapsed .brand { font-size: 1rem; }
         .sidebar.collapsed .toggle-inline { display: flex; }
 
-        /* ========== SIDEBAR MENU - UPDATED ========== */
+        /* ========== SIDEBAR MENU ========== */
         .sidebar-menu { 
             flex: 1; 
             padding: 8px 14px;
@@ -265,26 +393,6 @@ function getRatingText($score) {
         }
         .create-btn-border i { font-size: 1.1rem; }
 
-        .btn-sm {
-            padding: 6px 20px;
-            border-radius: 30px;
-            background: #1a56db;
-            color: white;
-            text-decoration: none;
-            font-size: 0.7rem;
-            font-weight: 600;
-            display: inline-block;
-            transition: all 0.2s;
-            border: none;
-            cursor: pointer;
-        }
-        .btn-sm:hover {
-            background: #0d3b8a;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(26, 86, 219, 0.3);
-            color: white;
-        }
-
         .profile-info { 
             display: flex; 
             align-items: center; 
@@ -326,6 +434,24 @@ function getRatingText($score) {
             flex: 1;
         }
 
+        /* ========== BUTTONS ========== */
+        .btn-submit {
+            background: #1a56db;
+            color: white;
+            border: none;
+            padding: 14px 36px;
+            border-radius: 30px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-submit:hover {
+            background: #0d3b8a;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(26, 86, 219, 0.3);
+        }
+
         /* ---------- CONTENT AREA ---------- */
         .content-area {
             background: white;
@@ -334,140 +460,100 @@ function getRatingText($score) {
             border: 1px solid rgba(255,255,255,0.6);
             box-shadow: 0 2px 12px rgba(10,42,94,0.05);
             min-height: 350px;
+            max-width: 600px;
+            margin: 0 auto;
         }
-        .content-area .header-section {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 16px;
+        .content-area h4 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #0a2a5e;
             margin-bottom: 24px;
-        }
-        .content-area h3 {
-            font-size: 1.3rem;
-            font-weight: 700;
-            color: #0a2a5e;
             display: flex;
             align-items: center;
-            gap: 12px;
-        }
-        .content-area h3 i {
-            color: #1a56db;
+            gap: 10px;
         }
 
-        /* ---------- SECTION HEADERS ---------- */
-        .section-header {
+        /* ---------- PROFILE PREVIEW - PICTURE ONLY, CENTERED ---------- */
+        .profile-preview {
             display: flex;
+            justify-content: center;
             align-items: center;
-            gap: 12px;
-            margin-bottom: 12px;
-            margin-top: 20px;
-        }
-        .section-header h4 {
-            font-size: 1.05rem;
-            font-weight: 700;
-            color: #0a2a5e;
-        }
-        .section-header .badge-count {
-            background: #1a56db;
-            color: white;
-            font-size: 0.7rem;
-            font-weight: 600;
-            padding: 2px 12px;
-            border-radius: 30px;
-        }
-        .section-header .badge-count.pending {
-            background: #f59e0b;
-        }
-        .section-subtitle {
-            color: #6b85a0;
-            font-size: 0.9rem;
-            margin-bottom: 16px;
-        }
-
-        /* ---------- TABLE STYLES ---------- */
-        .table-responsive { 
-            overflow-x: auto; 
-            -webkit-overflow-scrolling: touch;
-            margin: 0 -4px;
-        }
-
-        .complaints-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
-        }
-        .complaints-table thead th {
+            padding: 30px 20px;
             background: #f8fafc;
-            padding: 12px 14px;
-            text-align: left;
+            border-radius: 16px;
+            margin-bottom: 28px;
+            border: 1px solid #e5edf5;
+        }
+        .profile-preview .avatar {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #0a2a5e, #003d7a);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 3rem;
+            font-weight: 700;
+            flex-shrink: 0;
+            overflow: hidden;
+            border: 4px solid #dbeafe;
+            box-shadow: 0 4px 20px rgba(26, 86, 219, 0.15);
+        }
+        .profile-preview .avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* ---------- FORMS ---------- */
+        .form-group { margin-bottom: 20px; }
+        .form-group label {
+            display: block;
             font-weight: 600;
-            color: #4a5a7a;
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-            border-bottom: 2px solid #e5edf5;
-        }
-        .complaints-table tbody td {
-            padding: 12px 14px;
-            border-bottom: 1px solid #f0f4f9;
-            color: #1f2c40;
-            font-size: 0.85rem;
-        }
-        .complaints-table tbody tr:hover {
-            background: #fafcff;
-        }
-        .complaints-table tbody tr:last-child td { border-bottom: none; }
-
-        /* ---------- RATING STARS ---------- */
-        .rating-stars {
-            color: #f59e0b;
+            color: #0a2a5e;
+            margin-bottom: 6px;
             font-size: 0.9rem;
-            letter-spacing: 2px;
         }
-        .rating-stars .far {
-            color: #d1d5db;
+        .form-group label .required {
+            color: #dc2626;
         }
-        .rating-text {
-            font-size: 0.7rem;
-            color: #6b85a0;
-            margin-left: 6px;
-            font-weight: 500;
-        }
-
-        /* ---------- EMPTY STATE ---------- */
-        .empty-row td {
-            text-align: center;
-            padding: 40px 20px;
-            color: #8ba0bc;
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1.5px solid #e5edf5;
+            border-radius: 12px;
             font-size: 0.95rem;
+            transition: border 0.2s;
+            background: #fafcff;
+            font-family: 'Inter', sans-serif;
         }
-        .empty-row td i {
-            font-size: 2.5rem;
-            display: block;
-            margin-bottom: 12px;
-            color: #d4e2f7;
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #1a56db;
+            box-shadow: 0 0 0 3px rgba(26,86,219,0.08);
         }
-        .empty-row td a {
-            color: #1a56db;
-            font-weight: 600;
-            text-decoration: none;
+        .form-group input:disabled {
+            background: #f0f4f9;
+            cursor: not-allowed;
+            opacity: 0.7;
         }
-        .empty-row td a:hover {
-            text-decoration: underline;
-        }
-
-        .empty-state-sm {
-            text-align: center;
-            padding: 20px;
+        .form-group .helper-text {
+            font-size: 0.78rem;
             color: #8ba0bc;
-            font-size: 0.9rem;
+            margin-top: 4px;
         }
-        .empty-state-sm i {
-            font-size: 1.8rem;
-            display: block;
-            margin-bottom: 8px;
-            color: #d4e2f7;
+        .form-group .file-input-wrapper {
+            position: relative;
+        }
+        .form-group .file-input-wrapper input[type="file"] {
+            padding: 10px;
+            background: #f8fafc;
+            border: 2px dashed #e5edf5;
+            cursor: pointer;
+        }
+        .form-group .file-input-wrapper input[type="file"]:hover {
+            border-color: #1a56db;
         }
 
         /* ---------- MODAL ---------- */
@@ -541,7 +627,6 @@ function getRatingText($score) {
             visibility: visible; 
             opacity: 1; 
         }
-
         .loading-content {
             text-align: center;
             padding: 40px 50px;
@@ -550,7 +635,6 @@ function getRatingText($score) {
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
-
         .spinner {
             width: 48px;
             height: 48px;
@@ -561,16 +645,12 @@ function getRatingText($score) {
             margin: 0 auto;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-
         .loading-text { 
             margin-top: 16px; 
             color: #ffffff; 
             font-weight: 500;
             font-size: 1rem;
             letter-spacing: 0.3px;
-        }
-        .loading-text i {
-            margin-right: 8px;
         }
 
         /* ============================================
@@ -584,30 +664,58 @@ function getRatingText($score) {
         }
 
         @media (max-width: 768px) {
-            .sidebar { width: 70px !important; overflow: hidden; }
+            .sidebar {
+                width: 70px !important;
+                overflow: hidden;
+            }
             .sidebar:not(.collapsed) { width: 70px !important; }
             .sidebar.collapsed { width: 70px !important; }
             
-            .brand { font-size: 0.8rem !important; }
+            .brand {
+                font-size: 0.8rem !important;
+            }
             .brand span { display: none !important; }
             .row-tagline { display: none !important; }
-            .row-cfms { flex-direction: column !important; gap: 4px !important; justify-content: center !important; align-items: center !important; }
-            .toggle-inline { display: flex !important; }
+            .row-cfms {
+                flex-direction: column !important;
+                gap: 4px !important;
+                justify-content: center !important;
+                align-items: center !important;
+            }
+            .toggle-inline {
+                display: flex !important;
+            }
             .toggle-standalone { display: none !important; }
             
-            .menu-item { justify-content: center !important; padding: 12px 0 !important; margin: 4px 0 !important; gap: 0 !important; border-radius: 10px !important; }
+            .menu-item {
+                justify-content: center !important;
+                padding: 12px 0 !important;
+                margin: 4px 0 !important;
+                gap: 0 !important;
+                border-radius: 10px !important;
+            }
             .menu-item span { display: none !important; }
-            .menu-item i { font-size: 1.3rem !important; width: 100% !important; text-align: center !important; margin: 0 !important; }
+            .menu-item i {
+                font-size: 1.3rem !important;
+                width: 100% !important;
+                text-align: center !important;
+                margin: 0 !important;
+            }
             .menu-item:hover { transform: none !important; }
             
             .logout-item .menu-item span { display: none !important; }
             .logout-item .menu-item i { font-size: 1.3rem !important; }
 
-            .main-content { margin-left: 70px !important; }
-            .sidebar.collapsed ~ .main-content { margin-left: 70px !important; }
+            .main-content {
+                margin-left: 70px !important;
+            }
+            .sidebar.collapsed ~ .main-content {
+                margin-left: 70px !important;
+            }
 
             .dashboard-body { padding: 16px; }
             .top-bar { padding: 12px 16px; gap: 10px; }
+            
             .create-btn-border span { display: none; }
             .create-btn-border { padding: 10px 16px; gap: 6px; font-size: 0.85rem; }
             .create-btn-border i { margin: 0; font-size: 1rem; }
@@ -616,39 +724,66 @@ function getRatingText($score) {
             .profile-details .reg { font-size: 0.6rem; }
             .profile-pic { width: 36px; height: 36px; }
 
-            .content-area { padding: 16px; border-radius: 16px; }
-            .content-area .header-section { flex-direction: column; align-items: stretch; gap: 12px; }
-            .content-area h3 { font-size: 1.05rem; }
+            .content-area {
+                padding: 16px;
+                border-radius: 16px;
+                max-width: 100%;
+            }
+            .content-area h4 { font-size: 1rem; }
 
-            .section-header h4 { font-size: 0.95rem; }
-            .section-subtitle { font-size: 0.8rem; }
+            .profile-preview {
+                padding: 20px;
+            }
+            .profile-preview .avatar {
+                width: 100px;
+                height: 100px;
+                font-size: 2.5rem;
+            }
 
-            .complaints-table thead th,
-            .complaints-table tbody td { padding: 8px 8px; font-size: 0.7rem; }
-            .complaints-table thead th { font-size: 0.6rem; }
-            .btn-sm { padding: 4px 12px; font-size: 0.6rem; }
-            
-            .rating-stars { font-size: 0.75rem; }
-            .rating-text { font-size: 0.6rem; }
+            .btn-submit {
+                padding: 12px 24px;
+                font-size: 0.85rem;
+                width: 100%;
+            }
 
-            .empty-row td { font-size: 0.8rem; padding: 30px 15px; }
-            .empty-row td i { font-size: 2rem; }
-            .empty-state-sm { font-size: 0.8rem; }
-            .empty-state-sm i { font-size: 1.5rem; }
+            .toast-container {
+                top: 8px;
+                right: 8px;
+                max-width: calc(100% - 16px);
+            }
+            .toast {
+                font-size: 0.8rem;
+                padding: 12px 16px;
+            }
         }
 
         @media (max-width: 480px) {
-            .sidebar { width: 60px !important; }
+            .sidebar {
+                width: 60px !important;
+            }
             .sidebar:not(.collapsed) { width: 60px !important; }
             .sidebar.collapsed { width: 60px !important; }
             
-            .brand { font-size: 0.7rem !important; }
-            .menu-item { padding: 10px 0 !important; margin: 3px 0 !important; }
-            .menu-item i { font-size: 1.1rem !important; }
-            .logout-item .menu-item i { font-size: 1.1rem !important; }
+            .brand {
+                font-size: 0.7rem !important;
+            }
+            .menu-item {
+                padding: 10px 0 !important;
+                margin: 3px 0 !important;
+            }
+            .menu-item i {
+                font-size: 1.1rem !important;
+            }
+            .logout-item .menu-item i {
+                font-size: 1.1rem !important;
+            }
 
-            .main-content { margin-left: 60px !important; }
-            .sidebar.collapsed ~ .main-content { margin-left: 60px !important; }
+            .main-content {
+                margin-left: 60px !important;
+            }
+            .sidebar.collapsed ~ .main-content {
+                margin-left: 60px !important;
+            }
 
             .dashboard-body { padding: 12px; }
             .top-bar { padding: 10px 12px; gap: 8px; }
@@ -658,54 +793,101 @@ function getRatingText($score) {
             .profile-details .name { font-size: 0.7rem; }
             .profile-details .reg { font-size: 0.5rem; }
 
-            .content-area { padding: 12px; border-radius: 12px; }
-            .content-area h3 { font-size: 0.9rem; }
+            .content-area {
+                padding: 12px;
+                border-radius: 12px;
+            }
+            .content-area h4 { font-size: 0.85rem; }
 
-            .section-header h4 { font-size: 0.85rem; }
-            .section-header .badge-count { font-size: 0.6rem; padding: 1px 10px; }
+            .profile-preview .avatar {
+                width: 80px;
+                height: 80px;
+                font-size: 2rem;
+            }
 
-            .complaints-table thead th,
-            .complaints-table tbody td { padding: 6px 6px; font-size: 0.6rem; }
-            .complaints-table thead th { font-size: 0.55rem; }
-            .btn-sm { padding: 3px 10px; font-size: 0.55rem; }
-            
-            .rating-stars { font-size: 0.65rem; letter-spacing: 1px; }
-            .rating-text { font-size: 0.55rem; }
+            .form-group label {
+                font-size: 0.8rem;
+            }
+            .form-group input, .form-group select, .form-group textarea {
+                padding: 10px 14px;
+                font-size: 0.85rem;
+            }
 
-            .empty-row td { font-size: 0.7rem; padding: 20px 10px; }
-            .empty-row td i { font-size: 1.5rem; }
-            .empty-state-sm { font-size: 0.7rem; padding: 12px; }
-            .empty-state-sm i { font-size: 1.2rem; }
+            .btn-submit {
+                padding: 10px 20px;
+                font-size: 0.8rem;
+            }
 
-            .modal-container { padding: 24px 20px; }
-            .modal-container h3 { font-size: 1rem; }
-            .modal-btn { padding: 8px 20px; font-size: 0.8rem; min-width: 80px; }
+            .modal-container {
+                padding: 20px 16px;
+            }
+            .modal-container h3 {
+                font-size: 1rem;
+            }
+            .modal-btn {
+                padding: 8px 16px;
+                font-size: 0.75rem;
+                min-width: 70px;
+            }
 
-            .loading-content { padding: 30px 30px; }
-            .spinner { width: 36px; height: 36px; }
-            .loading-text { font-size: 0.85rem; }
+            .loading-content {
+                padding: 24px 24px;
+            }
+            .spinner {
+                width: 32px;
+                height: 32px;
+            }
+            .loading-text {
+                font-size: 0.8rem;
+            }
+
+            .toast-container {
+                top: 6px;
+                right: 6px;
+                max-width: calc(100% - 12px);
+            }
+            .toast {
+                font-size: 0.7rem;
+                padding: 10px 14px;
+            }
+            .toast i {
+                font-size: 1rem;
+            }
         }
 
         @media (max-width: 380px) {
-            .sidebar { width: 55px !important; }
+            .sidebar {
+                width: 55px !important;
+            }
             .sidebar:not(.collapsed) { width: 55px !important; }
             .sidebar.collapsed { width: 55px !important; }
-            .main-content { margin-left: 55px !important; }
-            .sidebar.collapsed ~ .main-content { margin-left: 55px !important; }
-            .menu-item i { font-size: 0.95rem !important; }
+            .main-content {
+                margin-left: 55px !important;
+            }
+            .sidebar.collapsed ~ .main-content {
+                margin-left: 55px !important;
+            }
+            .menu-item i {
+                font-size: 0.95rem !important;
+            }
 
-            .content-area h3 { font-size: 0.8rem; }
-            .complaints-table thead th,
-            .complaints-table tbody td { padding: 4px 4px; font-size: 0.5rem; }
-            .complaints-table thead th { font-size: 0.5rem; }
-            .btn-sm { padding: 2px 8px; font-size: 0.5rem; }
-            .rating-stars { font-size: 0.55rem; }
+            .content-area h4 {
+                font-size: 0.75rem;
+            }
+            .profile-preview .avatar {
+                width: 60px;
+                height: 60px;
+                font-size: 1.5rem;
+            }
         }
     </style>
 </head>
 <body>
 
-<!-- ========== SIDEBAR (UPDATED TO MATCH MY_COMPLAINTS.PHP) ========== -->
+<!-- ========== TOAST CONTAINER ========== -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ========== SIDEBAR ========== -->
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <div class="row-cfms">
@@ -734,8 +916,8 @@ function getRatingText($score) {
             <i class="fas fa-list-ul"></i><span>My Complaints</span>
         </a>
         
-        <!-- Feedback (Active) -->
-        <a href="my_feedback.php" class="menu-item active">
+        <!-- Feedback -->
+        <a href="my_feedback.php" class="menu-item">
             <i class="fas fa-comment-dots"></i><span>Feedback</span>
         </a>
         
@@ -744,8 +926,8 @@ function getRatingText($score) {
             <i class="fas fa-bullhorn"></i><span>Announcements</span>
         </a>
         
-        <!-- Profile -->
-        <a href="profile.php" class="menu-item">
+        <!-- Profile (Active) -->
+        <a href="profile.php" class="menu-item active">
             <i class="fas fa-user-circle"></i><span>Profile</span>
         </a>
         
@@ -774,11 +956,11 @@ function getRatingText($score) {
                 <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
                     <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile">
                 <?php else: ?>
-                    <?php echo strtoupper(substr($full_name, 0, 1)); ?>
+                    <?php echo strtoupper(substr($student_name, 0, 1)); ?>
                 <?php endif; ?>
             </div>
             <div class="profile-details">
-                <div class="name"><?php echo htmlspecialchars($full_name); ?></div>
+                <div class="name"><?php echo htmlspecialchars($student_name); ?></div>
                 <div class="reg"><?php echo htmlspecialchars($reg_number); ?></div>
             </div>
         </div>
@@ -787,101 +969,53 @@ function getRatingText($score) {
     <!-- DASHBOARD BODY -->
     <div class="dashboard-body">
         <div class="content-area">
-            <!-- Header -->
-            <div class="header-section">
-                <h3>
-                    <i class="fas fa-star"></i> My Feedback
-                </h3>
-            </div>
+            <h4><i class="fas fa-user-circle" style="color:#1a56db;"></i> My Profile</h4>
 
-            <!-- ===== PENDING FEEDBACK SECTION ===== -->
-            <?php if (!empty($pending_feedbacks)): ?>
-                <div class="section-header">
-                    <h4><i class="fas fa-clock" style="color: #f59e0b;"></i> Pending Feedback</h4>
-                    <span class="badge-count pending"><?php echo count($pending_feedbacks); ?></span>
-                </div>
-                <p class="section-subtitle">These complaints have been resolved. Please rate your experience.</p>
-                
-                <div class="table-responsive">
-                    <table class="complaints-table">
-                        <thead>
-                            <tr>
-                                <th>Complaint #</th>
-                                <th>Title</th>
-                                <th>Resolved On</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($pending_feedbacks as $pf): ?>
-                                <tr>
-                                    <td><strong><?php echo htmlspecialchars($pf['complaint_number']); ?></strong></td>
-                                    <td><?php echo htmlspecialchars($pf['title']); ?></td>
-                                    <td><?php echo date('d/m/Y', strtotime($pf['resolved_at'])); ?></td>
-                                    <td>
-                                        <a href="feedback.php?id=<?php echo $pf['id']; ?>" class="btn-sm">
-                                            <i class="fas fa-star"></i> Rate Now
-                                        </a>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            <?php endif; ?>
-
-            <!-- ===== GIVEN FEEDBACK SECTION ===== -->
-            <div class="section-header" style="margin-top: <?php echo !empty($pending_feedbacks) ? '30px' : '0'; ?>;">
-                <h4><i class="fas fa-check-circle" style="color: #10b981;"></i> Your Given Feedback</h4>
-                <span class="badge-count"><?php echo count($feedbacks); ?></span>
-            </div>
-
-            <?php if (empty($feedbacks)): ?>
-                <div class="empty-state-sm">
-                    <i class="fas fa-inbox"></i>
-                    <?php if (!empty($pending_feedbacks)): ?>
-                        You haven't provided any feedback yet. Rate your resolved complaints above.
+            <!-- Profile Preview - PICTURE ONLY, CENTERED -->
+            <div class="profile-preview">
+                <div class="avatar">
+                    <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
+                        <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile Picture">
                     <?php else: ?>
-                        You haven't provided any feedback yet. After your complaints are resolved, you can rate them.
+                        <?php echo strtoupper(substr($student_name, 0, 1)); ?>
                     <?php endif; ?>
                 </div>
-            <?php else: ?>
-                <div class="table-responsive">
-                    <table class="complaints-table">
-                        <thead>
-                            <tr>
-                                <th>Complaint #</th>
-                                <th>Title</th>
-                                <th>Rating</th>
-                                <th>Feedback</th>
-                                <th>Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($feedbacks as $fb): ?>
-                                <tr>
-                                    <td><strong><?php echo htmlspecialchars($fb['complaint_number']); ?></strong></td>
-                                    <td><?php echo htmlspecialchars($fb['title']); ?></td>
-                                    <td>
-                                        <span class="rating-stars">
-                                            <?php for ($i = 1; $i <= 5; $i++): ?>
-                                                <?php if ($i <= $fb['rating_score']): ?>
-                                                    <i class="fas fa-star"></i>
-                                                <?php else: ?>
-                                                    <i class="far fa-star"></i>
-                                                <?php endif; ?>
-                                            <?php endfor; ?>
-                                        </span>
-                                        <span class="rating-text">(<?php echo getRatingText($fb['rating_score']); ?>)</span>
-                                    </td>
-                                    <td><?php echo nl2br(htmlspecialchars($fb['feedback'] ?: 'No comment')); ?></td>
-                                    <td><?php echo date('d/m/Y', strtotime($fb['created_at'])); ?></td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+            </div>
+
+            <!-- Update Profile Form -->
+            <form method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="update_profile" value="1">
+                
+                <div class="form-group">
+                    <label>Full Name <span class="required">*</span></label>
+                    <input type="text" name="full_name" value="<?php echo htmlspecialchars($student_name); ?>" placeholder="Enter your full name" required>
                 </div>
-            <?php endif; ?>
+                
+                <div class="form-group">
+                    <label>Email Address <span class="required">*</span></label>
+                    <input type="email" name="email" value="<?php echo htmlspecialchars($student_email); ?>" placeholder="student@gmail.com" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="tel" name="phone" value="<?php echo htmlspecialchars($phone); ?>" placeholder="Enter your phone number">
+                </div>
+                
+                <div class="form-group">
+                    <label>Profile Picture</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" name="profile_picture" accept="image/jpeg,image/png,image/jpg,image/gif">
+                    </div>
+                    <div class="helper-text">Allowed: JPG, PNG, GIF (Max 2MB)</div>
+                    <?php if (!empty($profile_pic)): ?>
+                        <div style="margin-top:8px; font-size:0.82rem; color:#6b85a0;">
+                            <i class="fas fa-image" style="color:#1a56db;"></i> Current: <?php echo basename($profile_pic); ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                
+                <button type="submit" class="btn-submit"><i class="fas fa-save"></i> Update Profile</button>
+            </form>
         </div>
     </div>
 </div>
@@ -911,6 +1045,48 @@ function getRatingText($score) {
 
 <!-- ========== JAVASCRIPT ========== -->
 <script>
+    // ========== TOAST NOTIFICATIONS ==========
+    function showToast(message, type = 'info', duration = 3500) {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        
+        const icons = {
+            success: 'fa-check-circle',
+            error: 'fa-exclamation-circle',
+            info: 'fa-info-circle'
+        };
+        
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.innerHTML = `
+            <i class="fas ${icons[type] || icons.info}"></i>
+            <span class="toast-message">${message}</span>
+            <button class="toast-close" onclick="this.closest('.toast').remove()">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="toast-progress"></div>
+        `;
+        
+        container.appendChild(toast);
+        
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.classList.add('hide');
+                setTimeout(() => {
+                    if (toast.parentNode) toast.remove();
+                }, 400);
+            }
+        }, duration);
+    }
+
+    <?php if (!empty($flash_message)): ?>
+        <?php if ($flash_type === 'success'): ?>
+            showToast('<?php echo addslashes($flash_message); ?>', 'success');
+        <?php else: ?>
+            showToast('<?php echo addslashes($flash_message); ?>', 'error');
+        <?php endif; ?>
+    <?php endif; ?>
+
     // ---------- SIDEBAR TOGGLE ----------
     const sidebar = document.getElementById('sidebar');
     const toggleInline = document.getElementById('toggleInline');
@@ -1008,6 +1184,13 @@ function getRatingText($score) {
 
     modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.classList.remove('active');
+    });
+
+    // ---------- PROFILE FORM SUBMISSION ----------
+    document.querySelector('form[enctype="multipart/form-data"]')?.addEventListener('submit', function() {
+        const btn = this.querySelector('.btn-submit');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
     });
 </script>
 

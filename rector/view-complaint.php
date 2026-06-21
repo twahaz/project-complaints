@@ -170,6 +170,22 @@ $categories = [
         }
         .brand span { color: #2563eb; }
 
+        .toggle-inline, .toggle-standalone {
+            background: rgba(10,42,94,0.08);
+            border: none;
+            color: #0a2a5e;
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            font-size: 1.1rem;
+        }
+        .toggle-inline:hover, .toggle-standalone:hover { background: rgba(10,42,94,0.15); }
+
         .row-tagline { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
         .tagline {
             font-size: 0.7rem;
@@ -178,6 +194,12 @@ $categories = [
             text-transform: uppercase;
             font-weight: 600;
         }
+
+        .sidebar:not(.collapsed) .toggle-inline { display: none; }
+        .sidebar.collapsed .row-tagline { display: none; }
+        .sidebar.collapsed .row-cfms { flex-direction: column; justify-content: center; gap: 12px; }
+        .sidebar.collapsed .brand { font-size: 1rem; }
+        .sidebar.collapsed .toggle-inline { display: flex; }
 
         .sidebar-menu { 
             flex: 1; 
@@ -259,7 +281,6 @@ $categories = [
         }
         .sidebar.collapsed ~ .main-content { margin-left: 80px; }
 
-        /* ========== TOP BAR - UPDATED ========== */
         .top-bar {
             background: rgba(255,255,255,0.92);
             padding: 16px 32px;
@@ -274,29 +295,6 @@ $categories = [
             flex-wrap: wrap;
             gap: 12px;
         }
-
-        .btn-dashboard {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 24px;
-            background: #1a56db;
-            color: white;
-            border-radius: 30px;
-            font-weight: 600;
-            text-decoration: none;
-            transition: all 0.2s;
-            font-size: 0.9rem;
-            border: none;
-            flex-shrink: 0;
-        }
-        .btn-dashboard:hover {
-            background: #0d3b8a;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(26, 86, 219, 0.35);
-            color: white;
-        }
-        .btn-dashboard i { font-size: 1rem; }
 
         .profile-info { 
             display: flex; 
@@ -366,7 +364,7 @@ $categories = [
             color: #1a56db;
         }
 
-        /* ---------- LEFT PANEL (Steps) - NO TOGGLE ---------- */
+        /* ---------- LEFT PANEL (Steps) ---------- */
         .left-panel {
             width: 320px;
             background: rgba(255, 255, 255, 0.7);
@@ -383,10 +381,58 @@ $categories = [
             z-index: 100;
             padding: 32px 24px;
             border-right: 1px solid rgba(0, 71, 171, 0.1);
+            transition: width 0.4s cubic-bezier(0.2, 0.9, 0.4, 1.1), padding 0.3s ease;
             overflow-y: auto;
+        }
+        .left-panel.collapsed {
+            width: 80px;
+            padding: 32px 8px;
+        }
+        .left-panel.collapsed .brand-with-toggle {
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+        .left-panel.collapsed .brand-text h2 {
+            font-size: 1rem;
+            margin-bottom: 0;
+            text-align: center;
+        }
+        .left-panel.collapsed .brand-text p {
+            display: none;
+        }
+        .left-panel.collapsed .step-title {
+            font-size: 0.7rem;
+            white-space: normal;
+            text-align: center;
+            border-left: none;
+            padding-left: 0;
+            margin-top: 20px;
+            writing-mode: horizontal-tb;
+            transform: none;
+        }
+        .left-panel.collapsed .step-label {
+            display: none;
+        }
+        .left-panel.collapsed .step-item {
+            justify-content: center;
+            gap: 0;
+        }
+        .left-panel.collapsed .step-number {
+            width: 36px;
+            height: 36px;
+            font-size: 0.9rem;
         }
 
         .logo-area { margin-bottom: 40px; }
+        .brand-with-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            transition: flex-direction 0.3s ease;
+        }
         .brand-text h2 {
             font-size: 1.8rem;
             background: linear-gradient(135deg, #0047AB, #2a9d8f);
@@ -399,6 +445,29 @@ $categories = [
         .brand-text p {
             font-size: 0.75rem;
             color: #5a6e8a;
+        }
+        .sidebar-toggle {
+            width: 32px;
+            height: 32px;
+            background: #1a56db;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: white;
+            font-size: 1rem;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            transition: transform 0.4s ease, background 0.2s;
+            flex-shrink: 0;
+            border: none;
+        }
+        .sidebar-toggle:hover {
+            background: #0d3b8a;
+            transform: scale(1.05);
+        }
+        .left-panel.collapsed .sidebar-toggle i {
+            transform: rotate(180deg);
         }
 
         .step-title {
@@ -505,7 +574,11 @@ $categories = [
             height: 100vh;
             overflow-y: auto;
             background: #ebf4fe;
-            padding: 0px 60px 40px 60px;
+            padding: 40px 60px;
+            transition: margin-left 0.4s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+        }
+        .left-panel.collapsed ~ .right-panel {
+            margin-left: 80px;
         }
 
         .step-content {
@@ -529,7 +602,6 @@ $categories = [
             max-width: 1000px;
             margin: 0 auto;
             width: 100%;
-            padding-top: 20px;
         }
 
         /* ---------- FORM STYLES ---------- */
@@ -847,7 +919,7 @@ $categories = [
            ============================================ */
 
         @media (max-width: 1024px) {
-            .right-panel { padding: 0px 32px 30px 32px; }
+            .right-panel { padding: 30px 32px; }
             .category-grid { grid-template-columns: repeat(2, 1fr); }
         }
 
@@ -860,6 +932,8 @@ $categories = [
             .brand span { display: none !important; }
             .row-tagline { display: none !important; }
             .row-cfms { flex-direction: column !important; gap: 4px !important; justify-content: center !important; align-items: center !important; }
+            .toggle-inline { display: flex !important; }
+            .toggle-standalone { display: none !important; }
             
             .menu-item { justify-content: center !important; padding: 12px 0 !important; margin: 4px 0 !important; gap: 0 !important; border-radius: 10px !important; }
             .menu-item span { display: none !important; }
@@ -875,9 +949,6 @@ $categories = [
             .dashboard-body { padding: 16px; }
             .top-bar { padding: 12px 16px; gap: 10px; }
 
-            .btn-dashboard span { display: none; }
-            .btn-dashboard { padding: 10px 14px; font-size: 0.85rem; }
-
             .profile-details .name { font-size: 0.8rem; }
             .profile-details .reg { font-size: 0.6rem; }
             .profile-pic { width: 36px; height: 36px; }
@@ -886,6 +957,7 @@ $categories = [
             .content-area h3 { font-size: 1.05rem; }
 
             .left-panel { width: 80px; padding: 24px 8px; }
+            .left-panel .brand-with-toggle { flex-direction: column; justify-content: center; gap: 8px; }
             .left-panel .brand-text h2 { font-size: 1rem; text-align: center; }
             .left-panel .brand-text p { display: none; }
             .left-panel .step-title { font-size: 0.7rem; text-align: center; border-left: none; padding-left: 0; margin-top: 20px; }
@@ -896,7 +968,7 @@ $categories = [
 
             .right-panel { 
                 margin-left: 80px; 
-                padding: 0px 16px 20px 16px; 
+                padding: 20px 16px; 
             }
             .step-content { padding: 20px; border-radius: 16px; }
 
@@ -935,8 +1007,6 @@ $categories = [
 
             .dashboard-body { padding: 12px; }
             .top-bar { padding: 10px 12px; gap: 8px; }
-            .btn-dashboard { padding: 8px 12px; font-size: 0.75rem; }
-            .btn-dashboard i { font-size: 0.85rem; }
             .profile-pic { width: 32px; height: 32px; }
             .profile-details .name { font-size: 0.7rem; }
             .profile-details .reg { font-size: 0.5rem; }
@@ -944,7 +1014,7 @@ $categories = [
             .content-area { padding: 12px; border-radius: 12px; }
             .content-area h3 { font-size: 0.9rem; }
 
-            .right-panel { padding: 0px 12px 16px 12px; }
+            .right-panel { padding: 12px; }
             .step-content { padding: 16px; }
 
             .category-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -1000,32 +1070,31 @@ $categories = [
     <div class="sidebar-header">
         <div class="row-cfms">
             <span class="brand">CFMS <span>| Student</span></span>
+            <button class="toggle-inline" id="toggleInline">❮</button>
         </div>
         <div class="row-tagline">
-            <span class="tagline">Student Portal</span>
+            <span class="tagline">Complaint Management</span>
+            <button class="toggle-standalone" id="toggleStandalone">❮</button>
         </div>
     </div>
 
     <div class="sidebar-menu">
-        <a href="student_dashboard.php" class="menu-item">
+        <a href="student_dashboard.php?page=dashboard" class="menu-item">
             <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
         </a>
-        <a href="new_complaint.php" class="menu-item active">
-            <i class="fas fa-plus-circle"></i><span>New Complaint</span>
-        </a>
         <a href="my_complaints.php" class="menu-item">
-            <i class="fas fa-list-ul"></i><span>My Complaints</span>
+            <i class="fas fa-file-alt"></i><span>My Complaints</span>
         </a>
         <a href="my_feedback.php" class="menu-item">
             <i class="fas fa-comment-dots"></i><span>Feedback</span>
         </a>
-        <a href="student_announcements.php" class="menu-item">
+        <a href="announcements.php" class="menu-item">
             <i class="fas fa-bullhorn"></i><span>Announcements</span>
         </a>
-        <a href="profile.php" class="menu-item">
+        <a href="student_dashboard.php?page=profile" class="menu-item">
             <i class="fas fa-user-circle"></i><span>Profile</span>
         </a>
-        <a href="change_password.php" class="menu-item">
+        <a href="student_dashboard.php?page=change-password" class="menu-item">
             <i class="fas fa-key"></i><span>Change Password</span>
         </a>
     </div>
@@ -1037,12 +1106,17 @@ $categories = [
     </div>
 </div>
 
-<!-- ========== LEFT PANEL (Steps) - NO TOGGLE ========== -->
+<!-- ========== LEFT PANEL (Steps) ========== -->
 <div class="left-panel" id="leftPanel">
     <div class="logo-area">
-        <div class="brand-text">
-            <h2>CFMS</h2>
-            <p>Complaint Management</p>
+        <div class="brand-with-toggle">
+            <div class="brand-text">
+                <h2>CFMS</h2>
+                <p>Complaint Management</p>
+            </div>
+            <div class="sidebar-toggle" id="sidebarToggle">
+                <i class="fas fa-chevron-left"></i>
+            </div>
         </div>
     </div>
     <div class="step-title">Create New Complaint</div>
@@ -1072,26 +1146,6 @@ $categories = [
 
 <!-- ========== RIGHT PANEL ========== -->
 <div class="right-panel">
-    <!-- TOP BAR -->
-    <div class="top-bar">
-        <a href="student_dashboard.php" class="btn-dashboard">
-            <i class="fas fa-arrow-left"></i><span> Dashboard</span>
-        </a>
-        <div class="profile-info">
-            <div class="profile-pic">
-                <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
-                    <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile">
-                <?php else: ?>
-                    <?php echo strtoupper(substr($student_name, 0, 1)); ?>
-                <?php endif; ?>
-            </div>
-            <div class="profile-details">
-                <div class="name"><?php echo htmlspecialchars($student_name); ?></div>
-                <div class="reg"><?php echo htmlspecialchars($reg_number); ?></div>
-            </div>
-        </div>
-    </div>
-
     <div class="form-container">
         <div class="mobile-step-title">Create New Complaint</div>
 
@@ -1300,6 +1354,77 @@ $categories = [
         showToast(message, 'info');
     }
 
+    // ---------- SIDEBAR TOGGLE ----------
+    const sidebar = document.getElementById('sidebar');
+    const toggleInline = document.getElementById('toggleInline');
+    const toggleStandalone = document.getElementById('toggleStandalone');
+
+    function updateToggleIcons(collapsed) {
+        const arrow = collapsed ? '❯' : '❮';
+        toggleInline.innerHTML = arrow;
+        toggleStandalone.innerHTML = arrow;
+    }
+
+    function isMobile() {
+        return window.innerWidth <= 768;
+    }
+
+    if (isMobile()) {
+        sidebar.classList.add('collapsed');
+        updateToggleIcons(true);
+        toggleInline.style.pointerEvents = 'none';
+        toggleInline.style.opacity = '0.5';
+        toggleStandalone.style.pointerEvents = 'none';
+        toggleStandalone.style.opacity = '0.5';
+    } else {
+        const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (isCollapsed) {
+            sidebar.classList.add('collapsed');
+            updateToggleIcons(true);
+        } else {
+            updateToggleIcons(false);
+        }
+        toggleInline.style.pointerEvents = 'auto';
+        toggleInline.style.opacity = '1';
+        toggleStandalone.style.pointerEvents = 'auto';
+        toggleStandalone.style.opacity = '1';
+    }
+
+    function toggleSidebar() {
+        if (isMobile()) return;
+        sidebar.classList.toggle('collapsed');
+        const collapsed = sidebar.classList.contains('collapsed');
+        localStorage.setItem('sidebarCollapsed', collapsed);
+        updateToggleIcons(collapsed);
+    }
+
+    toggleInline.addEventListener('click', toggleSidebar);
+    toggleStandalone.addEventListener('click', toggleSidebar);
+
+    window.addEventListener('resize', function() {
+        if (isMobile()) {
+            sidebar.classList.add('collapsed');
+            updateToggleIcons(true);
+            toggleInline.style.pointerEvents = 'none';
+            toggleInline.style.opacity = '0.5';
+            toggleStandalone.style.pointerEvents = 'none';
+            toggleStandalone.style.opacity = '0.5';
+        } else {
+            toggleInline.style.pointerEvents = 'auto';
+            toggleInline.style.opacity = '1';
+            toggleStandalone.style.pointerEvents = 'auto';
+            toggleStandalone.style.opacity = '1';
+            const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            if (isCollapsed) {
+                sidebar.classList.add('collapsed');
+                updateToggleIcons(true);
+            } else {
+                sidebar.classList.remove('collapsed');
+                updateToggleIcons(false);
+            }
+        }
+    });
+
     // ---------- LOGOUT MODAL ----------
     const logoutBtn = document.getElementById('logoutBtn');
     const modal = document.getElementById('logoutModal');
@@ -1417,6 +1542,28 @@ $categories = [
         stepList.style.setProperty('--line-top', `${firstCenterY}px`);
         stepList.style.setProperty('--line-bottom', `calc(100% - ${lastCenterY}px)`);
         stepList.style.setProperty('--line-left', `${firstCenterX}px`);
+    }
+
+    // Left panel toggle
+    const leftPanel = document.getElementById('leftPanel');
+    const panelToggle = document.getElementById('sidebarToggle');
+    if (panelToggle) {
+        panelToggle.addEventListener('click', () => {
+            leftPanel.classList.toggle('collapsed');
+            const collapsed = leftPanel.classList.contains('collapsed');
+            const animateLine = () => {
+                positionVerticalLine();
+                requestAnimationFrame(animateLine);
+            };
+            const frame = requestAnimationFrame(animateLine);
+            const onEnd = () => {
+                cancelAnimationFrame(frame);
+                positionVerticalLine();
+                leftPanel.removeEventListener('transitionend', onEnd);
+            };
+            leftPanel.addEventListener('transitionend', onEnd);
+            setTimeout(() => positionVerticalLine(), 50);
+        });
     }
 
     // Category selection

@@ -1,22 +1,20 @@
 <?php
 session_start();
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'president') {
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'examination_officer') {
     header("Location: ../index.php");
     exit();
 }
 
 require_once '../includes/connection.php';
 
-$president_id = $_SESSION['user_id'];
-$president_name = $_SESSION['full_name'];
-$president_email = $_SESSION['email'];
-
-$active_page = $_GET['page'] ?? 'dashboard';
+$officer_id = $_SESSION['user_id'];
+$officer_name = $_SESSION['full_name'];
+$officer_email = $_SESSION['email'];
 
 // Get profile data
 $prof_sql = "SELECT phone_number, profile_picture FROM users WHERE id = ?";
 $prof_stmt = mysqli_prepare($conn, $prof_sql);
-mysqli_stmt_bind_param($prof_stmt, "i", $president_id);
+mysqli_stmt_bind_param($prof_stmt, "i", $officer_id);
 mysqli_stmt_execute($prof_stmt);
 $prof_result = mysqli_stmt_get_result($prof_stmt);
 $prof_data = mysqli_fetch_assoc($prof_result);
@@ -25,16 +23,15 @@ $profile_pic = $prof_data['profile_picture'] ?? '';
 if (!isset($_SESSION['profile_picture']) && $profile_pic) $_SESSION['profile_picture'] = $profile_pic;
 mysqli_stmt_close($prof_stmt);
 
-// Handle reply to complaint (only if not escalated)
+// Handle reply to complaint
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
     $complaint_id = intval($_POST['complaint_id']);
     $message = trim($_POST['message']);
     $new_status = $_POST['status'] ?? 'in_progress';
     
-    // Check if complaint is escalated
     $check_sql = "SELECT status FROM complaints WHERE id = ? AND assigned_to = ?";
     $check_stmt = mysqli_prepare($conn, $check_sql);
-    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $president_id);
+    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $officer_id);
     mysqli_stmt_execute($check_stmt);
     $check_result = mysqli_stmt_get_result($check_stmt);
     $check_row = mysqli_fetch_assoc($check_result);
@@ -42,19 +39,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
     if ($check_row && $check_row['status'] === 'escalated') {
         $_SESSION['flash_message'] = "This complaint has been escalated and is read‑only. You cannot modify it.";
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+        header("Location: examination_dashboard.php?page=view-complaint&id=" . $complaint_id);
         exit();
     }
     
     if (!empty($message)) {
         $insert_sql = "INSERT INTO responses (complaint_id, user_id, message) VALUES (?, ?, ?)";
         $insert_stmt = mysqli_prepare($conn, $insert_sql);
-        mysqli_stmt_bind_param($insert_stmt, "iis", $complaint_id, $president_id, $message);
+        mysqli_stmt_bind_param($insert_stmt, "iis", $complaint_id, $officer_id, $message);
         mysqli_stmt_execute($insert_stmt);
         mysqli_stmt_close($insert_stmt);
         
         if ($new_status === 'escalated') {
-            // Find deputy rector
             $deputy_sql = "SELECT id FROM users WHERE role = 'deputy_rector' LIMIT 1";
             $deputy_stmt = mysqli_prepare($conn, $deputy_sql);
             mysqli_stmt_execute($deputy_stmt);
@@ -63,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
             $deputy_id = $deputy_row['id'] ?? null;
             mysqli_stmt_close($deputy_stmt);
             if ($deputy_id) {
-                $update_sql = "UPDATE complaints SET status = ?, escalated_to = ? WHERE id = ?";
+                $update_sql = "UPDATE complaints SET status = ?, escalated_to = ?, updated_at = NOW() WHERE id = ?";
                 $update_stmt = mysqli_prepare($conn, $update_sql);
                 mysqli_stmt_bind_param($update_stmt, "sii", $new_status, $deputy_id, $complaint_id);
                 mysqli_stmt_execute($update_stmt);
@@ -72,11 +68,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
             } else {
                 $_SESSION['flash_message'] = "Deputy Rector not found. Cannot escalate.";
                 $_SESSION['flash_type'] = "error";
-                header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+                header("Location: examination_dashboard.php?page=view-complaint&id=" . $complaint_id);
                 exit();
             }
         } else {
-            $update_sql = "UPDATE complaints SET status = ? WHERE id = ?";
+            $update_sql = "UPDATE complaints SET status = ?, updated_at = NOW() WHERE id = ?";
             $update_stmt = mysqli_prepare($conn, $update_sql);
             mysqli_stmt_bind_param($update_stmt, "si", $new_status, $complaint_id);
             mysqli_stmt_execute($update_stmt);
@@ -85,15 +81,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reply_complaint'])) {
         $_SESSION['flash_message'] = "Reply sent successfully!";
         $_SESSION['flash_type'] = "success";
         if ($new_status === 'escalated') {
-            header("Location: president_dashboard.php?page=escalated");
+            header("Location: examination_dashboard.php?page=escalated");
         } else {
-            header("Location: president_dashboard.php?page=complaints");
+            header("Location: examination_dashboard.php?page=complaints");
         }
         exit();
     } else {
         $_SESSION['flash_message'] = "Message cannot be empty.";
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+        header("Location: examination_dashboard.php?page=view-complaint&id=" . $complaint_id);
         exit();
     }
 }
@@ -105,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     
     $check_sql = "SELECT status FROM complaints WHERE id = ? AND assigned_to = ?";
     $check_stmt = mysqli_prepare($conn, $check_sql);
-    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $president_id);
+    mysqli_stmt_bind_param($check_stmt, "ii", $complaint_id, $officer_id);
     mysqli_stmt_execute($check_stmt);
     $check_result = mysqli_stmt_get_result($check_stmt);
     $check_row = mysqli_fetch_assoc($check_result);
@@ -113,7 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     if ($check_row && $check_row['status'] === 'escalated') {
         $_SESSION['flash_message'] = "This complaint has been escalated and is read‑only. You cannot modify it.";
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+        header("Location: examination_dashboard.php?page=view-complaint&id=" . $complaint_id);
         exit();
     }
     
@@ -126,7 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         $deputy_id = $deputy_row['id'] ?? null;
         mysqli_stmt_close($deputy_stmt);
         if ($deputy_id) {
-            $update_sql = "UPDATE complaints SET status = ?, escalated_to = ? WHERE id = ?";
+            $update_sql = "UPDATE complaints SET status = ?, escalated_to = ?, updated_at = NOW() WHERE id = ?";
             $update_stmt = mysqli_prepare($conn, $update_sql);
             mysqli_stmt_bind_param($update_stmt, "sii", $new_status, $deputy_id, $complaint_id);
             mysqli_stmt_execute($update_stmt);
@@ -135,11 +131,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         } else {
             $_SESSION['flash_message'] = "Deputy Rector not found.";
             $_SESSION['flash_type'] = "error";
-            header("Location: president_dashboard.php?page=view-complaint&id=" . $complaint_id);
+            header("Location: examination_dashboard.php?page=view-complaint&id=" . $complaint_id);
             exit();
         }
     } else {
-        $update_sql = "UPDATE complaints SET status = ? WHERE id = ?";
+        $update_sql = "UPDATE complaints SET status = ?, updated_at = NOW() WHERE id = ?";
         $update_stmt = mysqli_prepare($conn, $update_sql);
         mysqli_stmt_bind_param($update_stmt, "si", $new_status, $complaint_id);
         mysqli_stmt_execute($update_stmt);
@@ -148,9 +144,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     }
     $_SESSION['flash_type'] = "success";
     if ($new_status === 'escalated') {
-        header("Location: president_dashboard.php?page=escalated");
+        header("Location: examination_dashboard.php?page=escalated");
     } else {
-        header("Location: president_dashboard.php?page=complaints");
+        header("Location: examination_dashboard.php?page=complaints");
     }
     exit();
 }
@@ -174,7 +170,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             $upload_dir = '../uploads/profiles/';
             if (!is_dir($upload_dir)) mkdir($upload_dir, 0755, true);
             $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $new_filename = 'president_' . $president_id . '_' . time() . '.' . $extension;
+            $new_filename = 'exam_' . $officer_id . '_' . time() . '.' . $extension;
             $destination = $upload_dir . $new_filename;
             if (move_uploaded_file($file['tmp_name'], $destination)) {
                 $new_profile_picture = 'uploads/profiles/' . $new_filename;
@@ -189,19 +185,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     if (empty($errors)) {
         $update_sql = "UPDATE users SET full_name = ?, phone_number = ?, profile_picture = ? WHERE id = ?";
         $update_stmt = mysqli_prepare($conn, $update_sql);
-        mysqli_stmt_bind_param($update_stmt, "sssi", $new_full_name, $new_phone, $new_profile_picture, $president_id);
+        mysqli_stmt_bind_param($update_stmt, "sssi", $new_full_name, $new_phone, $new_profile_picture, $officer_id);
         mysqli_stmt_execute($update_stmt);
         mysqli_stmt_close($update_stmt);
         $_SESSION['full_name'] = $new_full_name;
         $_SESSION['profile_picture'] = $new_profile_picture;
         $_SESSION['flash_message'] = "Profile updated successfully!";
         $_SESSION['flash_type'] = "success";
-        header("Location: president_dashboard.php?page=profile");
+        header("Location: examination_dashboard.php?page=profile");
         exit();
     } else {
         $_SESSION['flash_message'] = implode("<br>", $errors);
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=profile");
+        header("Location: examination_dashboard.php?page=profile");
         exit();
     }
 }
@@ -222,17 +218,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
         $hashed = password_hash($new_password, PASSWORD_DEFAULT);
         $pass_sql = "UPDATE users SET password_hash = ? WHERE id = ?";
         $pass_stmt = mysqli_prepare($conn, $pass_sql);
-        mysqli_stmt_bind_param($pass_stmt, "si", $hashed, $president_id);
+        mysqli_stmt_bind_param($pass_stmt, "si", $hashed, $officer_id);
         mysqli_stmt_execute($pass_stmt);
         mysqli_stmt_close($pass_stmt);
         $_SESSION['flash_message'] = "Password changed successfully!";
         $_SESSION['flash_type'] = "success";
-        header("Location: president_dashboard.php?page=change-password");
+        header("Location: examination_dashboard.php?page=change-password");
         exit();
     } else {
         $_SESSION['flash_message'] = implode("<br>", $errors);
         $_SESSION['flash_type'] = "error";
-        header("Location: president_dashboard.php?page=change-password");
+        header("Location: examination_dashboard.php?page=change-password");
         exit();
     }
 }
@@ -246,9 +242,9 @@ if (isset($_SESSION['flash_message'])) {
     unset($_SESSION['flash_type']);
 }
 
+$active_page = $_GET['page'] ?? 'dashboard';
 $complaint_id = isset($_GET['id']) ? intval($_GET['id']) : 0;
 
-// Filters & pagination
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $priority_filter = isset($_GET['priority']) ? $_GET['priority'] : '';
 $sort = isset($_GET['sort']) ? $_GET['sort'] : 'newest';
@@ -256,36 +252,38 @@ $page = isset($_GET['p']) ? max(1, intval($_GET['p'])) : 1;
 $limit = 20;
 $offset = ($page - 1) * $limit;
 
-// Get announcements
-$announcements = [];
-$table_check = mysqli_query($conn, "SHOW TABLES LIKE 'announcements'");
-if ($table_check && mysqli_num_rows($table_check) > 0) {
-    $announcement_sql = "SELECT a.id, a.title, a.message, a.created_at, u.full_name as sender_name 
-                         FROM announcements a
-                         LEFT JOIN users u ON a.created_by = u.id
-                         WHERE a.is_active = 1 
-                         AND (a.target_type = 'all' 
-                              OR a.target_type = 'students'
-                              OR (a.target_type = 'individual' AND a.target_id = ?))
-                         ORDER BY a.created_at DESC LIMIT 4";
-    $ann_stmt = mysqli_prepare($conn, $announcement_sql);
-    if ($ann_stmt) {
-        mysqli_stmt_bind_param($ann_stmt, "i", $president_id);
-        mysqli_stmt_execute($ann_stmt);
-        $ann_result = mysqli_stmt_get_result($ann_stmt);
-        while ($ann = mysqli_fetch_assoc($ann_result)) {
-            $announcements[] = $ann;
-        }
-        mysqli_stmt_close($ann_stmt);
-    }
-}
+// Get statistics for dashboard
+$stats_sql = "SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+    SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+    SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
+    SUM(CASE WHEN status = 'escalated' THEN 1 ELSE 0 END) as escalated
+    FROM complaints WHERE assigned_to = ?";
+$stats_stmt = mysqli_prepare($conn, $stats_sql);
+mysqli_stmt_bind_param($stats_stmt, "i", $officer_id);
+mysqli_stmt_execute($stats_stmt);
+$stats_result = mysqli_stmt_get_result($stats_stmt);
+$stats = mysqli_fetch_assoc($stats_result);
+mysqli_stmt_close($stats_stmt);
+
+// Get LATEST 5 complaints for dashboard
+$recent_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, u.full_name 
+              FROM complaints c 
+              JOIN users u ON c.student_id = u.id 
+              WHERE c.assigned_to = ? 
+              ORDER BY c.created_at DESC LIMIT 5";
+$recent_stmt = mysqli_prepare($conn, $recent_sql);
+mysqli_stmt_bind_param($recent_stmt, "i", $officer_id);
+mysqli_stmt_execute($recent_stmt);
+$recent_result = mysqli_stmt_get_result($recent_stmt);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>IAASO President Dashboard - IAA CFMS</title>
+    <title>Examination Officer Dashboard - IAA CFMS</title>
     <link rel="icon" type="image/png" href="../images/logo.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -644,6 +642,20 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             box-shadow: 0 4px 12px rgba(26, 86, 219, 0.3);
             color: white;
         }
+        .btn-sm.danger {
+            background: #dc2626;
+        }
+        .btn-sm.danger:hover {
+            background: #991b1b;
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+        }
+        .btn-sm.success {
+            background: #10b981;
+        }
+        .btn-sm.success:hover {
+            background: #065f46;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
 
         .btn-submit {
             background: #1a56db;
@@ -682,7 +694,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         .badge-in-progress { background: #dbeafe; color: #1e40af; }
         .badge-resolved { background: #d1fae5; color: #065f46; }
         .badge-escalated { background: #fee2e2; color: #991b1b; }
-        .badge-new { background: #1a56db; color: white; font-size: 0.55rem; padding: 2px 10px; border-radius: 30px; font-weight: 600; text-transform: uppercase; }
 
         /* ---------- TABLE ---------- */
         .table-responsive { 
@@ -841,6 +852,68 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             background: #1a56db;
             color: white;
             border-color: #1a56db;
+        }
+
+        /* ---------- SLA CARD ---------- */
+        .sla-card {
+            background: linear-gradient(135deg, #f0f4ff 0%, #e9effa 100%);
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 20px;
+            border-left: 4px solid #1a56db;
+            border: 1px solid #dbeafe;
+        }
+        .sla-title {
+            font-weight: 700;
+            font-size: 1rem;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #0a2a5e;
+        }
+        .sla-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 16px;
+        }
+        .sla-item .sla-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            font-weight: 600;
+            color: #6b85a0;
+            letter-spacing: 0.3px;
+        }
+        .sla-item .sla-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #0a2a5e;
+            margin-top: 2px;
+        }
+        .deadline-timer {
+            font-family: monospace;
+            font-size: 1.1rem;
+            font-weight: 700;
+            background: #ffffffcc;
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 30px;
+            border: 1px solid #dbeafe;
+        }
+        .sla-overdue {
+            color: #991b1b;
+            background: #fee2e2;
+            border-radius: 30px;
+            padding: 4px 14px;
+            display: inline-block;
+            font-weight: 600;
+        }
+        .sla-resolved {
+            color: #065f46;
+            background: #d1fae5;
+            border-radius: 30px;
+            padding: 4px 14px;
+            display: inline-block;
         }
 
         /* ---------- COMPLAINT DETAIL ---------- */
@@ -1007,102 +1080,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             margin-bottom: 12px;
         }
 
-        /* ---------- ANNOUNCEMENT SIDEBAR ---------- */
-        .announcements-sidebar {
-            background: white;
-            border-radius: 20px;
-            padding: 24px 22px;
-            border: 1px solid rgba(255,255,255,0.6);
-            box-shadow: 0 2px 12px rgba(10,42,94,0.05);
-            min-height: 300px;
-        }
-        .announcements-sidebar h4 {
-            font-size: 1rem;
-            font-weight: 700;
-            color: #0a2a5e;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .announcements-sidebar h4 i {
-            color: #f59e0b;
-        }
-        .announcements-sidebar .view-all {
-            font-size: 0.75rem;
-            color: #1a56db;
-            text-decoration: none;
-            font-weight: 600;
-            margin-left: auto;
-        }
-        .announcements-sidebar .view-all:hover {
-            text-decoration: underline;
-        }
-
-        .announcement-summary {
-            padding: 14px 0;
-            border-bottom: 1px solid #f0f4f9;
-        }
-        .announcement-summary:last-child {
-            border-bottom: none;
-        }
-        .announcement-summary .a-title {
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: #0a2a5e;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-        .announcement-summary .a-title .badge-new {
-            background: #1a56db;
-            color: white;
-            font-size: 0.55rem;
-            padding: 2px 10px;
-            border-radius: 30px;
-            font-weight: 600;
-            text-transform: uppercase;
-        }
-        .announcement-summary .a-sender {
-            font-size: 0.78rem;
-            color: #6b85a0;
-            margin-top: 3px;
-        }
-        .announcement-summary .a-sender i {
-            margin-right: 4px;
-            color: #1a56db;
-        }
-        .announcement-summary .a-time {
-            font-size: 0.65rem;
-            color: #8ba0bc;
-            margin-top: 3px;
-        }
-        .announcement-summary .a-time i {
-            margin-right: 4px;
-        }
-
-        .no-announcements-sidebar {
-            color: #8ba0bc;
-            text-align: center;
-            padding: 30px 0;
-            font-size: 0.9rem;
-        }
-        .no-announcements-sidebar i {
-            font-size: 1.5rem;
-            display: block;
-            margin-bottom: 8px;
-        }
-
-        /* ---------- GRID LAYOUT ---------- */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 70% 30%;
-            gap: 24px;
-            margin-top: 24px;
-        }
-
         /* ---------- MODAL ---------- */
         .modal-overlay {
             position: fixed;
@@ -1209,7 +1186,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             .top-bar { padding: 14px 24px; }
             .form-row { grid-template-columns: 1fr; }
             .complaint-detail-grid { grid-template-columns: 1fr; }
-            .dashboard-grid { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 768px) {
@@ -1312,11 +1288,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.85rem;
             }
 
-            .announcements-sidebar {
-                padding: 16px;
-                min-height: auto;
-            }
-
             .complaints-table thead th,
             .complaints-table tbody td {
                 padding: 8px 10px;
@@ -1343,6 +1314,24 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.82rem;
             }
 
+            .sla-card {
+                padding: 14px 16px;
+            }
+            .sla-stats {
+                grid-template-columns: 1fr 1fr;
+                gap: 10px;
+            }
+            .sla-item .sla-label {
+                font-size: 0.6rem;
+            }
+            .sla-item .sla-value {
+                font-size: 0.85rem;
+            }
+            .deadline-timer {
+                font-size: 0.85rem;
+                padding: 3px 10px;
+            }
+
             .description-box {
                 padding: 12px;
             }
@@ -1365,16 +1354,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             }
             .message-body {
                 font-size: 0.82rem;
-            }
-
-            .announcement-summary .a-title {
-                font-size: 0.8rem;
-            }
-            .announcement-summary .a-sender {
-                font-size: 0.7rem;
-            }
-            .announcement-summary .a-time {
-                font-size: 0.6rem;
             }
 
             .btn-submit {
@@ -1507,10 +1486,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.75rem;
             }
 
-            .announcements-sidebar {
-                padding: 12px;
-            }
-
             .complaints-table thead th,
             .complaints-table tbody td {
                 padding: 6px 6px;
@@ -1532,6 +1507,24 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 font-size: 0.75rem;
             }
 
+            .sla-card {
+                padding: 10px 12px;
+            }
+            .sla-stats {
+                grid-template-columns: 1fr;
+                gap: 6px;
+            }
+            .sla-item .sla-label {
+                font-size: 0.55rem;
+            }
+            .sla-item .sla-value {
+                font-size: 0.8rem;
+            }
+            .deadline-timer {
+                font-size: 0.75rem;
+                padding: 2px 8px;
+            }
+
             .description-box {
                 padding: 10px;
             }
@@ -1551,16 +1544,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             }
             .message-body {
                 font-size: 0.75rem;
-            }
-
-            .announcement-summary .a-title {
-                font-size: 0.75rem;
-            }
-            .announcement-summary .a-sender {
-                font-size: 0.65rem;
-            }
-            .announcement-summary .a-time {
-                font-size: 0.55rem;
             }
 
             .btn-submit {
@@ -1646,38 +1629,38 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <div class="row-cfms">
-            <span class="brand">CFMS <span>| IAASO</span></span>
+            <span class="brand">CFMS <span>| Exam</span></span>
             <button class="toggle-inline" id="toggleInline">❮</button>
         </div>
         <div class="row-tagline">
-            <span class="tagline">IAASO Portal</span>
+            <span class="tagline">Examination Portal</span>
             <button class="toggle-standalone" id="toggleStandalone">❮</button>
         </div>
     </div>
 
     <div class="sidebar-menu">
-        <a href="president_dashboard.php?page=dashboard" class="menu-item <?php echo $active_page == 'dashboard' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=dashboard" class="menu-item <?php echo $active_page == 'dashboard' ? 'active' : ''; ?>">
             <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
         </a>
-        <a href="president_dashboard.php?page=complaints" class="menu-item <?php echo $active_page == 'complaints' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=complaints" class="menu-item <?php echo $active_page == 'complaints' ? 'active' : ''; ?>">
             <i class="fas fa-file-alt"></i><span>All Complaints</span>
         </a>
-        <a href="president_dashboard.php?page=pending" class="menu-item <?php echo $active_page == 'pending' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=pending" class="menu-item <?php echo $active_page == 'pending' ? 'active' : ''; ?>">
             <i class="fas fa-clock"></i><span>Pending</span>
         </a>
-        <a href="president_dashboard.php?page=resolved" class="menu-item <?php echo $active_page == 'resolved' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=resolved" class="menu-item <?php echo $active_page == 'resolved' ? 'active' : ''; ?>">
             <i class="fas fa-check-circle"></i><span>Resolved</span>
         </a>
-        <a href="president_dashboard.php?page=escalated" class="menu-item <?php echo $active_page == 'escalated' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=escalated" class="menu-item <?php echo $active_page == 'escalated' ? 'active' : ''; ?>">
             <i class="fas fa-exclamation-triangle"></i><span>Escalated</span>
         </a>
-        <a href="president_announcements.php" class="menu-item <?php echo $active_page == 'announcements' ? 'active' : ''; ?>">
+        <a href="announcements.php" class="menu-item <?php echo $active_page == 'announcements' ? 'active' : ''; ?>">
             <i class="fas fa-bullhorn"></i><span>Announcements</span>
         </a>
-        <a href="president_dashboard.php?page=profile" class="menu-item <?php echo $active_page == 'profile' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=profile" class="menu-item <?php echo $active_page == 'profile' ? 'active' : ''; ?>">
             <i class="fas fa-user-circle"></i><span>Profile</span>
         </a>
-        <a href="president_dashboard.php?page=change-password" class="menu-item <?php echo $active_page == 'change-password' ? 'active' : ''; ?>">
+        <a href="examination_dashboard.php?page=change-password" class="menu-item <?php echo $active_page == 'change-password' ? 'active' : ''; ?>">
             <i class="fas fa-key"></i><span>Change Password</span>
         </a>
     </div>
@@ -1695,21 +1678,21 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
     <div class="top-bar">
         <div>
             <div style="font-size: 0.9rem; font-weight: 600; color: #0a2a5e;">
-                <i class="fas fa-university" style="color: #1a56db;"></i> Welcome, <?php echo htmlspecialchars($president_name); ?>
+                <i class="fas fa-university" style="color: #1a56db;"></i> Welcome, <?php echo htmlspecialchars($officer_name); ?>
             </div>
-            <div style="font-size: 0.75rem; color: #6b85a0;">IAASO President</div>
+            <div style="font-size: 0.75rem; color: #6b85a0;">Examination Officer</div>
         </div>
         <div class="profile-info">
             <div class="profile-pic">
                 <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
                     <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile">
                 <?php else: ?>
-                    <?php echo strtoupper(substr($president_name, 0, 1)); ?>
+                    <?php echo strtoupper(substr($officer_name, 0, 1)); ?>
                 <?php endif; ?>
             </div>
             <div class="profile-details">
-                <div class="name"><?php echo htmlspecialchars($president_name); ?></div>
-                <div class="reg">President (IAASO)</div>
+                <div class="name"><?php echo htmlspecialchars($officer_name); ?></div>
+                <div class="reg">Examination Officer</div>
             </div>
         </div>
     </div>
@@ -1725,32 +1708,6 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
         <?php endif; ?>
 
         <?php if ($active_page == 'dashboard'): ?>
-            <?php
-            $stats_sql = "SELECT 
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
-                SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved,
-                SUM(CASE WHEN status = 'escalated' THEN 1 ELSE 0 END) as escalated
-                FROM complaints WHERE assigned_to = ?";
-            $stats_stmt = mysqli_prepare($conn, $stats_sql);
-            mysqli_stmt_bind_param($stats_stmt, "i", $president_id);
-            mysqli_stmt_execute($stats_stmt);
-            $stats_result = mysqli_stmt_get_result($stats_stmt);
-            $stats = mysqli_fetch_assoc($stats_result);
-            mysqli_stmt_close($stats_stmt);
-
-            // Get recent complaints
-            $recent_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, u.full_name 
-                          FROM complaints c 
-                          JOIN users u ON c.student_id = u.id 
-                          WHERE c.assigned_to = ? 
-                          ORDER BY c.created_at DESC LIMIT 5";
-            $recent_stmt = mysqli_prepare($conn, $recent_sql);
-            mysqli_stmt_bind_param($recent_stmt, "i", $president_id);
-            mysqli_stmt_execute($recent_stmt);
-            $recent_result = mysqli_stmt_get_result($recent_stmt);
-            ?>
             <!-- Statistics Cards -->
             <div class="summary-row">
                 <div class="summary-card">
@@ -1780,89 +1737,48 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 </div>
             </div>
 
-            <!-- Dashboard Grid: Recent Complaints & Announcements -->
-            <div class="dashboard-grid">
-                <!-- Recent Complaints -->
-                <div class="content-area">
-                    <h4><i class="fas fa-clock" style="color:#1a56db;"></i> Recent Complaints</h4>
-                    <div class="table-responsive">
-                        <table class="complaints-table">
-                            <thead>
-                                <tr>
-                                    <th>Complaint #</th>
-                                    <th>Student</th>
-                                    <th>Title</th>
-                                    <th>Status</th>
-                                    <th>Date</th>
-                                    <th>Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (mysqli_num_rows($recent_result) == 0): ?>
-                                    <tr><td colspan="6"><div class="no-data"><i class="fas fa-inbox"></i> No complaints assigned yet.</div></td></tr>
-                                <?php else: ?>
-                                    <?php while ($row = mysqli_fetch_assoc($recent_result)):
-                                        $status_class = match($row['status']) {
-                                            'pending' => 'badge-pending',
-                                            'in_progress' => 'badge-in-progress',
-                                            'resolved' => 'badge-resolved',
-                                            'escalated' => 'badge-escalated',
-                                            default => ''
-                                        };
-                                    ?>
-                                        <tr>
-                                            <td><strong><?php echo $row['complaint_number']; ?></strong></td>
-                                            <td><?php echo htmlspecialchars($row['full_name']); ?></td>
-                                            <td><?php echo htmlspecialchars($row['title']); ?></td>
-                                            <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
-                                            <td style="font-size:0.75rem;"><?php echo date('d/m/y', strtotime($row['created_at'])); ?></td>
-                                            <td><a href="president_dashboard.php?page=view-complaint&id=<?php echo $row['id']; ?>" class="btn-sm">View</a></td>
-                                        </tr>
-                                    <?php endwhile; ?>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                    <?php mysqli_stmt_close($recent_stmt); ?>
-                    <div style="margin-top: 16px; text-align: center;">
-                        <a href="president_dashboard.php?page=complaints" class="btn-sm" style="background: #6b85a0;">View All Complaints <i class="fas fa-arrow-right"></i></a>
-                    </div>
+            <!-- Recent Complaints -->
+            <div class="content-area">
+                <h4><i class="fas fa-clock" style="color:#1a56db;"></i> Recent Complaints</h4>
+                <div class="table-responsive">
+                    <table class="complaints-table">
+                        <thead>
+                            <tr>
+                                <th>Complaint #</th>
+                                <th>Student</th>
+                                <th>Title</th>
+                                <th>Status</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (mysqli_num_rows($recent_result) == 0): ?>
+                                <tr><td colspan="5"><div class="no-data"><i class="fas fa-inbox"></i> No complaints assigned yet.</div></td></tr>
+                            <?php else: ?>
+                                <?php while ($row = mysqli_fetch_assoc($recent_result)):
+                                    $status_class = match($row['status']) {
+                                        'pending' => 'badge-pending',
+                                        'in_progress' => 'badge-in-progress',
+                                        'resolved' => 'badge-resolved',
+                                        'escalated' => 'badge-escalated',
+                                        default => ''
+                                    };
+                                ?>
+                                    <tr>
+                                        <td><strong><?php echo $row['complaint_number']; ?></strong></td>
+                                        <td><?php echo htmlspecialchars($row['full_name']); ?></td>
+                                        <td><?php echo htmlspecialchars($row['title']); ?></td>
+                                        <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
+                                        <td style="font-size:0.75rem;"><?php echo date('d/m/y', strtotime($row['created_at'])); ?></td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
                 </div>
-
-                <!-- Announcements Sidebar -->
-                <div class="announcements-sidebar">
-                    <h4>
-                        <i class="fas fa-bullhorn"></i> Announcements
-                        <a href="president_announcements.php" class="view-all">View All →</a>
-                    </h4>
-                    
-                    <?php if (empty($announcements)): ?>
-                        <div class="no-announcements-sidebar">
-                            <i class="fas fa-inbox"></i>
-                            No announcements at the moment.
-                        </div>
-                    <?php else: ?>
-                        <?php foreach ($announcements as $ann): 
-                            $is_new = (time() - strtotime($ann['created_at'])) < (3 * 24 * 60 * 60);
-                            $sender_name = !empty($ann['sender_name']) ? $ann['sender_name'] : 'System';
-                        ?>
-                            <div class="announcement-summary">
-                                <div class="a-title">
-                                    <?php echo htmlspecialchars($ann['title']); ?>
-                                    <?php if ($is_new): ?>
-                                        <span class="badge-new">New</span>
-                                    <?php endif; ?>
-                                </div>
-                                <div class="a-sender">
-                                    <i class="fas fa-user"></i> <?php echo htmlspecialchars($sender_name); ?>
-                                </div>
-                                <div class="a-time">
-                                    <i class="far fa-clock"></i> 
-                                    <?php echo date('d M Y, h:i A', strtotime($ann['created_at'])); ?>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
+                <?php mysqli_stmt_close($recent_stmt); ?>
+                <div style="margin-top: 16px; text-align: center;">
+                    <a href="examination_dashboard.php?page=complaints" class="btn-sm" style="background: #6b85a0;">View All Complaints <i class="fas fa-arrow-right"></i></a>
                 </div>
             </div>
 
@@ -1881,42 +1797,35 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 'priority_low' => "FIELD(priority, 'low','medium','high')",
                 default => 'created_at DESC',
             };
-            // Count total
             $count_sql = "SELECT COUNT(*) as total FROM complaints WHERE $where";
             $count_stmt = mysqli_prepare($conn, $count_sql);
             if ($priority_filter && $search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($count_stmt, "iss", $president_id, $priority_filter, $search_param);
+                mysqli_stmt_bind_param($count_stmt, "iss", $officer_id, $priority_filter, $search_param);
             } elseif ($priority_filter) {
-                mysqli_stmt_bind_param($count_stmt, "is", $president_id, $priority_filter);
+                mysqli_stmt_bind_param($count_stmt, "is", $officer_id, $priority_filter);
             } elseif ($search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($count_stmt, "is", $president_id, $search_param);
+                mysqli_stmt_bind_param($count_stmt, "is", $officer_id, $search_param);
             } else {
-                mysqli_stmt_bind_param($count_stmt, "i", $president_id);
+                mysqli_stmt_bind_param($count_stmt, "i", $officer_id);
             }
             mysqli_stmt_execute($count_stmt);
             $total_rows = mysqli_fetch_assoc(mysqli_stmt_get_result($count_stmt))['total'];
             mysqli_stmt_close($count_stmt);
             $total_pages = ceil($total_rows / $limit);
-            // Fetch data
-            $data_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, u.full_name, c.priority
-                        FROM complaints c
-                        JOIN users u ON c.student_id = u.id
-                        WHERE $where
-                        ORDER BY $order_by
-                        LIMIT ? OFFSET ?";
+            $data_sql = "SELECT c.id, c.complaint_number, c.title, c.status, c.created_at, c.updated_at, u.full_name, c.priority FROM complaints c JOIN users u ON c.student_id = u.id WHERE $where ORDER BY $order_by LIMIT ? OFFSET ?";
             $data_stmt = mysqli_prepare($conn, $data_sql);
             if ($priority_filter && $search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($data_stmt, "issii", $president_id, $priority_filter, $search_param, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "issii", $officer_id, $priority_filter, $search_param, $limit, $offset);
             } elseif ($priority_filter) {
-                mysqli_stmt_bind_param($data_stmt, "isii", $president_id, $priority_filter, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "isii", $officer_id, $priority_filter, $limit, $offset);
             } elseif ($search) {
                 $search_param = "%$search%";
-                mysqli_stmt_bind_param($data_stmt, "isii", $president_id, $search_param, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "isii", $officer_id, $search_param, $limit, $offset);
             } else {
-                mysqli_stmt_bind_param($data_stmt, "iii", $president_id, $limit, $offset);
+                mysqli_stmt_bind_param($data_stmt, "iii", $officer_id, $limit, $offset);
             }
             mysqli_stmt_execute($data_stmt);
             $data_result = mysqli_stmt_get_result($data_stmt);
@@ -1985,7 +1894,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                                     <td><?php echo ucfirst($row['priority']); ?></td>
                                     <td><span class="badge <?php echo $status_class; ?>"><?php echo ucfirst($row['status']); ?></span></td>
                                     <td style="font-size:0.75rem;"><?php echo date('d/m/Y', strtotime($row['created_at'])); ?></td>
-                                    <td><a href="president_dashboard.php?page=view-complaint&id=<?php echo $row['id']; ?>" class="btn-sm">View</a></td>
+                                    <td><a href="examination_dashboard.php?page=view-complaint&id=<?php echo $row['id']; ?>" class="btn-sm">View</a></td>
                                 </tr>
                                 <?php endwhile; ?>
                             <?php endif; ?>
@@ -1996,17 +1905,17 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                 <?php if ($total_pages > 1): ?>
                 <div class="pagination">
                     <?php if ($page > 1): ?>
-                        <a href="president_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page-1; ?>"><i class="fas fa-chevron-left"></i></a>
+                        <a href="examination_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page-1; ?>"><i class="fas fa-chevron-left"></i></a>
                     <?php endif; ?>
                     <?php for ($i = 1; $i <= $total_pages; $i++): ?>
                         <?php if ($i == $page): ?>
                             <span class="current"><?php echo $i; ?></span>
                         <?php else: ?>
-                            <a href="president_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $i; ?>"><?php echo $i; ?></a>
+                            <a href="examination_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $i; ?>"><?php echo $i; ?></a>
                         <?php endif; ?>
                     <?php endfor; ?>
                     <?php if ($page < $total_pages): ?>
-                        <a href="president_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page+1; ?>"><i class="fas fa-chevron-right"></i></a>
+                        <a href="examination_dashboard.php?page=<?php echo $active_page; ?>&search=<?php echo urlencode($search); ?>&priority=<?php echo $priority_filter; ?>&sort=<?php echo $sort; ?>&p=<?php echo $page+1; ?>"><i class="fas fa-chevron-right"></i></a>
                     <?php endif; ?>
                 </div>
                 <?php endif; ?>
@@ -2017,7 +1926,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             <?php
             $detail_sql = "SELECT c.*, u.full_name as student_name, u.reg_number FROM complaints c JOIN users u ON c.student_id = u.id WHERE c.id = ? AND c.assigned_to = ?";
             $detail_stmt = mysqli_prepare($conn, $detail_sql);
-            mysqli_stmt_bind_param($detail_stmt, "ii", $complaint_id, $president_id);
+            mysqli_stmt_bind_param($detail_stmt, "ii", $complaint_id, $officer_id);
             mysqli_stmt_execute($detail_stmt);
             $detail_result = mysqli_stmt_get_result($detail_stmt);
             $complaint = mysqli_fetch_assoc($detail_result);
@@ -2087,36 +1996,34 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                         </div>
                     <?php endif; ?>
                     
-                    <div class="sla-card" style="background:linear-gradient(135deg, #f0f4ff 0%, #e9effa 100%); border-radius:16px; padding:20px 24px; margin-bottom:20px; border-left:4px solid #1a56db; border:1px solid #dbeafe;">
-                        <div style="font-weight:700; font-size:1rem; margin-bottom:14px; display:flex; align-items:center; gap:8px; color:#0a2a5e;">
-                            <i class="fas fa-hourglass-half"></i> SLA Monitoring
-                        </div>
-                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:16px;">
-                            <div>
-                                <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="far fa-clock"></i> Time since submission</div>
-                                <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><?php echo $elapsedFormatted; ?></div>
+                    <div class="sla-card">
+                        <div class="sla-title"><i class="fas fa-hourglass-half"></i> SLA Monitoring</div>
+                        <div class="sla-stats">
+                            <div class="sla-item">
+                                <div class="sla-label"><i class="far fa-clock"></i> Time since submission</div>
+                                <div class="sla-value"><?php echo $elapsedFormatted; ?></div>
                             </div>
                             <?php if ($is_resolved && $resolutionFormatted): ?>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-check-circle"></i> Total resolution time</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><span style="color:#065f46; background:#d1fae5; border-radius:30px; padding:4px 14px; display:inline-block; font-weight:600;"><?php echo $resolutionFormatted; ?></span></div>
+                                <div class="sla-item">
+                                    <div class="sla-label"><i class="fas fa-check-circle"></i> Total resolution time</div>
+                                    <div class="sla-value"><span class="sla-resolved"><?php echo $resolutionFormatted; ?></span></div>
                                 </div>
                             <?php else: ?>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-tachometer-alt"></i> SLA target (<?php echo ucfirst($complaint['priority']); ?> priority)</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><?php echo $slaHours; ?> hours (<?php echo round($slaHours/24,1); ?> days)</div>
+                                <div class="sla-item">
+                                    <div class="sla-label"><i class="fas fa-tachometer-alt"></i> SLA target (<?php echo ucfirst($complaint['priority']); ?> priority)</div>
+                                    <div class="sla-value"><?php echo $slaHours; ?> hours (<?php echo round($slaHours/24,1); ?> days)</div>
                                 </div>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-calendar-alt"></i> Deadline</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;"><?php echo $deadline->format('d/m/Y H:i'); ?></div>
+                                <div class="sla-item">
+                                    <div class="sla-label"><i class="fas fa-calendar-alt"></i> Deadline</div>
+                                    <div class="sla-value"><?php echo $deadline->format('d/m/Y H:i'); ?></div>
                                 </div>
-                                <div>
-                                    <div style="font-size:0.7rem; text-transform:uppercase; font-weight:600; color:#6b85a0; letter-spacing:0.3px;"><i class="fas fa-hourglass-end"></i> Remaining / Status</div>
-                                    <div style="font-size:1rem; font-weight:600; color:#0a2a5e; margin-top:2px;">
+                                <div class="sla-item">
+                                    <div class="sla-label"><i class="fas fa-hourglass-end"></i> Remaining / Status</div>
+                                    <div class="sla-value">
                                         <?php if ($slaStatus === 'active'): ?>
-                                            <span id="countdownTimer" style="font-family:monospace; font-size:1.1rem; font-weight:700; background:#ffffffcc; display:inline-block; padding:4px 14px; border-radius:30px; border:1px solid #dbeafe;" data-deadline="<?php echo $deadlineTimestamp * 1000; ?>">-- : -- : --</span>
+                                            <span id="countdownTimer" class="deadline-timer" data-deadline="<?php echo $deadlineTimestamp * 1000; ?>">-- : -- : --</span>
                                         <?php elseif ($slaStatus === 'overdue'): ?>
-                                            <span style="color:#991b1b; background:#fee2e2; border-radius:30px; padding:4px 14px; display:inline-block; font-weight:600;"><i class="fas fa-exclamation-triangle"></i> Overdue by <?php echo $overdueFormatted; ?></span>
+                                            <span class="sla-overdue"><i class="fas fa-exclamation-triangle"></i> Overdue by <?php echo $overdueFormatted; ?></span>
                                         <?php endif; ?>
                                     </div>
                                 </div>
@@ -2255,12 +2162,12 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                         <?php if (!empty($_SESSION['profile_picture']) && file_exists('../' . $_SESSION['profile_picture'])): ?>
                             <img src="../<?php echo htmlspecialchars($_SESSION['profile_picture']); ?>" alt="Profile" style="width:100%; height:100%; object-fit:cover;">
                         <?php else: ?>
-                            <?php echo strtoupper(substr($president_name, 0, 1)); ?>
+                            <?php echo strtoupper(substr($officer_name, 0, 1)); ?>
                         <?php endif; ?>
                     </div>
                     <div style="flex:1;">
-                        <h5 style="font-size:1rem; color:#0a2a5e;"><?php echo htmlspecialchars($president_name); ?></h5>
-                        <p style="color:#6b85a0; font-size:0.85rem;"><i class="fas fa-envelope" style="color:#1a56db; width:18px;"></i> <?php echo htmlspecialchars($president_email); ?></p>
+                        <h5 style="font-size:1rem; color:#0a2a5e;"><?php echo htmlspecialchars($officer_name); ?></h5>
+                        <p style="color:#6b85a0; font-size:0.85rem;"><i class="fas fa-envelope" style="color:#1a56db; width:18px;"></i> <?php echo htmlspecialchars($officer_email); ?></p>
                         <p style="color:#6b85a0; font-size:0.85rem;"><i class="fas fa-phone" style="color:#1a56db; width:18px;"></i> <?php echo !empty($phone) ? htmlspecialchars($phone) : 'Not provided'; ?></p>
                     </div>
                 </div>
@@ -2269,11 +2176,11 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
                     <input type="hidden" name="update_profile" value="1">
                     <div class="form-group">
                         <label>Full Name <span class="required">*</span></label>
-                        <input type="text" name="full_name" value="<?php echo htmlspecialchars($president_name); ?>" required>
+                        <input type="text" name="full_name" value="<?php echo htmlspecialchars($officer_name); ?>" required>
                     </div>
                     <div class="form-group">
                         <label>Email Address</label>
-                        <input type="email" value="<?php echo htmlspecialchars($president_email); ?>" disabled>
+                        <input type="email" value="<?php echo htmlspecialchars($officer_email); ?>" disabled>
                         <div class="helper-text">Email cannot be changed. Contact system administrator if needed.</div>
                     </div>
                     <div class="form-group">
@@ -2504,7 +2411,7 @@ if ($table_check && mysqli_num_rows($table_check) > 0) {
             const nowMs = new Date().getTime();
             const distance = deadlineMs - nowMs;
             if (distance < 0) {
-                countdownElement.innerHTML = '<span style="color:#991b1b; background:#fee2e2; border-radius:30px; padding:4px 14px; display:inline-block; font-weight:600;">⏰ SLA Expired</span>';
+                countdownElement.innerHTML = '<span class="sla-overdue">⏰ SLA Expired</span>';
                 return;
             }
             const days = Math.floor(distance / (1000 * 60 * 60 * 24));
